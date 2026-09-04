@@ -242,6 +242,20 @@ def generate_response(prompt):
                 print(f"[OpenRouter] {model} failed: {type(e).__name__}: {e}")
                 continue
 
+    # No provider was even attempted, because none of the three keys is
+    # set. Without this guard the `raise last_error` below raises None,
+    # and Python replaces it with "TypeError: exceptions must derive
+    # from BaseException" -- an error about the error, naming neither
+    # the cause nor the fix, printed under a banner claiming three
+    # providers failed when none was tried. Callers that catch
+    # Exception (translation.py) degrade correctly either way; the
+    # person reading the log to find out why does not.
+    if last_error is None:
+        raise RuntimeError(
+            "No LLM provider is configured -- set at least one of "
+            "GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY."
+        )
+
     print("\n" + "=" * 70)
     print("RESPONSE GENERATION ERROR (Groq, Gemini, and OpenRouter all failed)")
     print("=" * 70)
