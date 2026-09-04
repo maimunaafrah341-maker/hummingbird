@@ -138,8 +138,17 @@ frontend, and the build log would be green. A deploy that fails and
 tells you the root directory is wrong is more useful than one that
 succeeds at the wrong job.
 
-This repo deliberately ships **no** `pyproject.toml` for that reason.
-The error is the diagnostic.
+The error is the diagnostic. Do not silence it.
+
+`pyproject.toml` **is** currently in the repo, pinning `api:app`, and it
+should be deleted once whoever added it has read this:
+
+```
+git rm pyproject.toml && git commit -m "deploy: the error is the diagnostic"
+```
+
+It is left in place here only because removing a teammate's file is
+their call, not this document's.
 
 ### And the backend could not run there anyway
 
@@ -152,6 +161,42 @@ no state. The page would load and then sit empty.
 **Vercel for the frontend, Render for the backend.** That is the split
 this document assumes throughout.
 
+
+## Deployment Protection: the one that hides until demo day
+
+`https://<project>-<hash>-<team>.vercel.app` redirects to
+`vercel.com/login`.
+
+That is **Vercel Deployment Protection**, on by default for preview
+deployments. The page loads fine for whoever is signed in to the Vercel
+team and shows a login wall to everyone else -- so it looks perfect
+while you build it and fails for every judge, every phone, and every
+person you send the link to.
+
+Two separate things to fix, and you need both.
+
+**1. Use the production URL, not the deployment URL.** A hostname with
+a random hash in the middle -- `hummingbird-ma6xsncod-humming-bird1` --
+is a single immutable deployment, not the project. The production alias
+is the short one, and it is what should be on the slide.
+
+**2. Turn the protection off.**
+
+> Vercel &rarr; Project &rarr; Settings &rarr; Deployment Protection &rarr;
+> **Vercel Authentication: Disabled** &rarr; Save, then redeploy.
+
+**Verify it from outside your own session**, because signed in you
+cannot tell the difference:
+
+```bash
+curl -sI https://YOUR-URL.vercel.app | head -1
+```
+
+`HTTP/2 200` is right. `HTTP/2 307` or `302` with a `Location:` pointing
+at `vercel.com/sso-api` means it is still gated. A phone on mobile data,
+or any private window, tests the same thing.
+
+---
 
 ## Frontend — Vercel or Netlify
 
