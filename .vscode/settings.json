@@ -1,0 +1,8 @@
+{
+  "//": "Pylance reports ultralytics/cv2/numpy as unresolved when it is pointed at a different interpreter than the one the packages are installed in. Forward slashes on purpose: VSCode accepts them on Windows, and backslashes in JSON need escaping and get mangled by half the tools that touch this file.",
+  "python.defaultInterpreterPath": "C:/Users/Maimuna Afrah/AppData/Local/Programs/Python/Python311/python.exe",
+  "python.analysis.extraPaths": [
+    "C:/Users/Maimuna Afrah/AppData/Local/Programs/Python/Python311/Lib/site-packages"
+  ],
+  "python.analysis.typeCheckingMode": "basic"
+}
