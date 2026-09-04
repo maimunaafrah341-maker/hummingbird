@@ -239,11 +239,27 @@ def build_incident_request(violation, zone, source, confidence=None,
     endpoint -- do not "reconcile" the two.
     """
 
+    # Three names for two concepts, on purpose and temporarily. The
+    # incident service names these bay_id / substance_code /
+    # incident_type; this file grew up calling them zone / substance /
+    # hazard_type. Until one contract is agreed, both go on the wire --
+    # pydantic ignores unknown fields by default, so the cost is a few
+    # bytes and the benefit is that neither side can be broken by the
+    # other renaming first. Collapse this to one set once the real
+    # API_CONTRACT.md lands.
+    #
+    # Lengths, measured, for the service's MAX_FIELD_CHARS=200:
+    #   incident_type  <= 14 chars, bounded by the model's class names
+    #   bay_id         user-supplied via --zone, unbounded
+    #   substance_code user-supplied via --substance, unbounded
+    # Nothing this file generates on its own approaches 200.
     event = {
         "zone": zone,
-        "bay": zone,          # same value, both spellings, until the contract picks one
+        "bay": zone,
+        "bay_id": zone,
         "hazard_type": violation,
         "violation": violation,
+        "incident_type": violation,
         "source": source,     # "camera" | "kiosk" -- recorded, never branched on
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "language": language,
@@ -254,6 +270,11 @@ def build_incident_request(violation, zone, source, confidence=None,
 
     if substance is not None:
         event["substance"] = substance
+        # Their field is named substance_code, which suggests an
+        # identifier ("NAOH-50") rather than the name this sends
+        # ("Sodium hydroxide (50% solution)"). Sent as-is until somebody
+        # owns that mapping; flagged rather than silently invented.
+        event["substance_code"] = substance
 
     if camera_id is not None:
         event["camera_id"] = camera_id

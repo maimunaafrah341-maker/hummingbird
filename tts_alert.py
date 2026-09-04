@@ -35,6 +35,7 @@ Run it:
 
 import argparse
 import hashlib
+import inspect
 import os
 import re
 import sys
@@ -63,7 +64,10 @@ OFFLINE_RATE = int(os.getenv("HAZARDWATCH_TTS_RATE", "165"))
 # language, which is what you want.
 FORCED_BACKEND = os.getenv("HAZARDWATCH_TTS") or None
 
-_engine = None  # module-level: re-init()ing pyttsx3 per call is flaky on Windows
+# Cached only for *probing* which voices exist -- never for speaking.
+# speak_offline() builds its own engine per utterance; see the note
+# there about what sharing one across calls silently does.
+_engine = None
 
 
 def _cache_path(text, language):
@@ -91,6 +95,8 @@ def _offline_voice_for(language):
 
     global _engine
 
+    _init_com()
+
     import pyttsx3
 
     if _engine is None:
@@ -117,21 +123,65 @@ def _offline_voice_for(language):
     return None
 
 
+def _init_com():
+    """
+    Initialise COM for this thread, on Windows.
+
+    pyttsx3's Windows driver is SAPI5 over COM, and COM is per-thread.
+    A worker thread that never calls this gets an engine that accepts
+    say() and runAndWait() and returns immediately having produced no
+    sound -- success by every check the caller can make, and silence in
+    the room. Harmless everywhere else.
+    """
+
+    if sys.platform != "win32":
+        return
+
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except Exception:
+        pass      # already initialised, or pywin32 absent; speak() will find out
+
+
 def speak_offline(text, language="en"):
     """Speak via the OS engine. Returns True if it spoke."""
 
-    # No `global _engine` here: _offline_voice_for() is what creates it,
-    # and this function only ever reads it.
     voice = _offline_voice_for(language)
 
     if voice is None:
         return False
 
-    _engine.setProperty("voice", voice.id)
-    _engine.setProperty("rate", OFFLINE_RATE)
-    _engine.say(text)
-    _engine.runAndWait()
-    return True
+    # pyttsx3.Engine(), never pyttsx3.init().
+    #
+    # init() returns a process-wide SINGLETON, and that engine speaks
+    # exactly once. Measured: first utterance 4.2s and audible, second
+    # 0.3s and silent, third 0.2s and silent -- on the main thread, with
+    # no threads involved at all. Every call returns success. So a demo
+    # announces its first violation and then goes quiet for the rest of
+    # the session while every check still reports ok.
+    #
+    # Engine() bypasses that cache: 3.9s, 3.8s, 3.8s, all audible. The
+    # ~0.3s of extra construction is worth it to not lose every alert
+    # after the first.
+    _init_com()
+
+    import pyttsx3
+
+    engine = pyttsx3.Engine(driverName=None, debug=False)
+
+    try:
+        engine.setProperty("voice", voice.id)
+        engine.setProperty("rate", OFFLINE_RATE)
+        engine.say(text)
+        engine.runAndWait()
+        return True
+
+    finally:
+        try:
+            engine.stop()
+        except Exception:
+            pass
 
 
 def synthesize(text, language="en", refresh=False):
@@ -305,6 +355,40 @@ def selftest():
           % (voice.name if voice else "none installed"))
     print("  note: offline voice for 'hi': %s"
           % (getattr(_offline_voice_for("hi"), "name", None) or "none -- will use gTTS"))
+
+    # The singleton trap, guarded without making a sound.
+    #
+    # pyttsx3.init() hands back a process-wide engine that speaks once
+    # and is silently mute afterwards -- every later call still returns
+    # success. This asserts the property that made it dangerous, so if
+    # speak_offline ever drifts back to init() the reason is written
+    # down right here.
+    try:
+        import pyttsx3
+
+        check("pyttsx3.init() is a singleton (the trap)",
+              pyttsx3.init() is pyttsx3.init(),
+              "one engine per process; it speaks once, then stays silent")
+
+        first = pyttsx3.Engine(driverName=None, debug=False)
+        second = pyttsx3.Engine(driverName=None, debug=False)
+
+        check("Engine() gives a distinct engine (the fix)",
+              first is not second, "which is what speak_offline uses")
+
+        # Comments stripped first: the explanation above deliberately
+        # mentions init(), and a guard that trips on its own
+        # documentation is a guard nobody keeps.
+        code = "\n".join(
+            line.split("#", 1)[0]
+            for line in inspect.getsource(speak_offline).splitlines())
+
+        check("speak_offline does not call init()",
+              "pyttsx3.init(" not in code and "pyttsx3.Engine(" in code,
+              "regression guard")
+
+    except ImportError:
+        print("  note: pyttsx3 not installed -- engine checks skipped")
 
     print("\n%d/%d TTS checks passed" % (sum(checks), len(checks)))
     return 0 if all(checks) else 1

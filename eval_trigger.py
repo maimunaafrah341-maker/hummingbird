@@ -52,6 +52,7 @@ SUITES = [
     ("webhook dispatch", ["webhook_dispatch.py", "--selftest"]),
     ("tts alert", ["tts_alert.py", "--selftest"]),
     ("alert language", ["alert_language.py", "--selftest"]),
+    ("incident service", ["incident_api.py", "--selftest"]),
     ("incident rehearsal", ["smoke_test.py", "incident", "--no-audio", "--no-open"]),
 ]
 
