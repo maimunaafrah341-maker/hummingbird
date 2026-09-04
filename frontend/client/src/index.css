@@ -308,3 +308,53 @@ select { -webkit-tap-highlight-color: transparent; }
 .fatal-error h1 { margin: 0; font: 600 28px/1.1 "Space Grotesk", sans-serif; }
 .fatal-error p { max-width: 520px; margin: 0; color: #91a1a8; line-height: 1.6; }
 .fatal-error button { display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; padding: 11px 15px; border: 1px solid rgba(240,90,71,.55); background: rgba(240,90,71,.12); color: #ffb09a; }
+
+/* --- Backend-derived response: the contraindication and the language
+   state. Added when the console started rendering what the incident
+   service actually returns instead of a local table. --- */
+
+.contraindication {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #e0484d;
+  border-left: 4px solid #e0484d;
+  border-radius: 3px;
+  background: rgba(224, 72, 77, 0.09);
+  color: #ffd9da;
+  text-align: left;
+}
+.contraindication svg { flex: 0 0 auto; margin-top: 2px; color: #ff6b6f; }
+.contraindication strong {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #ff8b8f;
+  margin-bottom: 3px;
+}
+.contraindication span { font-size: 15px; line-height: 1.5; }
+
+.translation-state {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 6px 11px;
+  border-radius: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+.translation-state svg { flex: 0 0 auto; }
+.translation-ok {
+  background: rgba(63, 169, 107, 0.12);
+  border: 1px solid rgba(63, 169, 107, 0.5);
+  color: #8fdcae;
+}
+.translation-off {
+  background: rgba(217, 154, 43, 0.1);
+  border: 1px solid rgba(217, 154, 43, 0.45);
+  color: #e8c483;
+}

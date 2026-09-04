@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Activity,
   AlertTriangle,
+  Ban,
   Beaker,
   Building2,
   CheckCircle2,
@@ -39,11 +40,33 @@ type IncidentResponse = {
   severity: Severity;
   steps: string[];
   spoken_alert: string;
+  // The backend sends these and the console used to drop them on the
+  // floor. contraindication is the single most important string in the
+  // whole response -- "do not add water to the acid" is the difference
+  // between a spill and a hospital -- and it was being fetched, parsed,
+  // and thrown away.
+  contraindication?: string;
+  regulatory_citation?: string;
+  localization?: {
+    requested: string;
+    language: string;
+    translated: boolean;
+    reason: string | null;
+    spoken_alert: string;
+    steps: string[];
+  };
 };
 
 const locations = ["Bay-1", "Bay-2", "Bay-3, Reactor B", "Centrifuge C-201", "Distillation Column DC-4", "Mixing Vessel MV-12", "Compressor K-07", "Pump P-204", "Scrubber S-03", "Storage Tank TK-18", "Loading Dock 2", "Utilities · Boiler House"];
 const substances = ["Hydrochloric Acid", "Acetone", "Caustic Soda", "Sulfuric Acid", "Chlorine", "Ammonia Solution", "Methanol", "Hydrogen Peroxide", "Sodium Hypochlorite", "Ethylene Oxide", "Unknown Substance"];
 const languages = ["Telugu", "Hindi", "Bengali", "English"];
+
+// The picker shows names; the API takes codes. This console was sending
+// "Hindi" into a field documented as a language code, so the backend
+// could not have honoured it even once it started trying to.
+const languageCodes: Record<string, string> = {
+  English: "en", Hindi: "hi", Telugu: "te", Bengali: "bn",
+};
 const incidentTypes: { label: IncidentType; icon: typeof Waves; note: string }[] = [
   { label: "Spill", icon: Waves, note: "Liquid release" },
   { label: "Vapor Release", icon: Wind, note: "Airborne exposure" },
@@ -178,7 +201,20 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
   const broadcast = evacuationBroadcasts[context.language] ?? evacuationBroadcasts.English;
   const sequence = broadcast.instructions.flatMap((instruction) => [broadcast.lead, instruction]);
   const currentMessage = sequence[messageIndex];
-  const responseSteps = broadcast.instructions;
+
+  // The numbered steps are the incident service's answer, not the
+  // evacuation table. Those five broadcast lines are the same for a
+  // caustic spill and a chlorine leak -- they are the loudspeaker loop,
+  // and they were standing in for the substance-specific response the
+  // backend actually returns. That made the whole point of the backend
+  // invisible on the one screen anybody looks at.
+  const loc = response.localization;
+  const translated = Boolean(loc?.translated && loc.steps.length);
+  const responseSteps = translated
+    ? loc!.steps
+    : response.steps?.length
+      ? response.steps
+      : broadcast.instructions;
 
   useEffect(() => {
     const timer = window.setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
@@ -272,6 +308,30 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
           {!evacuationConfirmed && <button className="confirm-evacuation" onClick={confirmEvacuation}>{autoStopped ? "Confirm evacuation" : "Confirm evacuation"}</button>}
           {evacuationConfirmed && <CheckCircle2 size={22} />}
         </div>
+
+        {loc && loc.requested !== "en" && (
+          // Never present English as though it were the requested
+          // language. loc.language says what the text IS.
+          <div className={`translation-state ${translated ? "translation-ok" : "translation-off"}`}>
+            <Languages size={14} />
+            <span>{translated
+              ? `Response translated by the incident service · ${loc.language}`
+              : `Instructions shown in English — ${loc.reason ?? "translation unavailable"}`}</span>
+          </div>
+        )}
+
+        {response.contraindication && (
+          // Above the steps, not below. Someone reading top-down under
+          // stress must hit the thing not to do before the list of
+          // things to do -- the dossier PDF orders it the same way.
+          <div className="contraindication" role="alert">
+            <Ban size={20} strokeWidth={2.2} />
+            <div>
+              <strong>DO NOT</strong>
+              <span>{response.contraindication}</span>
+            </div>
+          </div>
+        )}
 
         <ol className="steps-list">
           {responseSteps.map((step, index) => (
@@ -406,8 +466,21 @@ export default function Home() {
       cameraStreamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setCameraOn(true);
-    } catch {
-      setMediaError("Camera permission was not granted. The console remains fully operational.");
+    } catch (err) {
+      // Naming the DOMException matters: NotAllowedError is a blocked
+      // permission the operator can re-grant, NotFoundError is no
+      // camera attached, and NotReadableError is another app holding
+      // the device. "Permission was not granted" was wrong for two of
+      // those three, and sent people to the wrong setting.
+      const name = (err as Error)?.name ?? "";
+      setMediaError(
+        name === "NotFoundError" || name === "OverconstrainedError"
+          ? "No camera found on this device. The console remains fully operational."
+          : name === "NotReadableError"
+            ? "The camera is already in use by another application. Close it and retry."
+            : name === "NotAllowedError"
+              ? "Camera permission was blocked. Allow it in the browser's address-bar icon, then retry."
+              : `Camera unavailable (${name || "unknown error"}). The console remains fully operational.`);
     }
   }
 
@@ -426,8 +499,16 @@ export default function Home() {
     try {
       micStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
       setMicOn(true);
-    } catch {
-      setMediaError("Microphone permission was not granted. The console remains fully operational.");
+    } catch (err) {
+      const name = (err as Error)?.name ?? "";
+      setMediaError(
+        name === "NotFoundError"
+          ? "No microphone found on this device. The console remains fully operational."
+          : name === "NotReadableError"
+            ? "The microphone is already in use by another application. Close it and retry."
+            : name === "NotAllowedError"
+              ? "Microphone permission was blocked. Allow it in the browser's address-bar icon, then retry."
+              : `Microphone unavailable (${name || "unknown error"}). The console remains fully operational.`);
     }
   }
 
@@ -446,15 +527,24 @@ export default function Home() {
     setIsSubmitting(true);
     if (!cameraOn) await toggleCamera();
     if (!micOn) await toggleMic();
-    const payload = { location, substance, incident_type: incidentType, language, media: { camera: cameraOn || Boolean(cameraStreamRef.current), microphone: micOn || Boolean(micStreamRef.current) } };
+    const payload = { location, substance, incident_type: incidentType, language: languageCodes[language] ?? "en", media: { camera: cameraOn || Boolean(cameraStreamRef.current), microphone: micOn || Boolean(micStreamRef.current) } };
     let response = defaultResponse;
     let live = false;
+
+    // A backend that is down must not look like a console that is
+    // broken. Without this, fetch waits on the browser's own timeout --
+    // minutes -- and the button sits on "Contacting incident gateway..."
+    // forever, which is exactly what a dead Render instance produced.
+    // Twelve seconds, then fall back and say so.
+    const abort = new AbortController();
+    const giveUp = window.setTimeout(() => abort.abort(), 12000);
 
     try {
       const result = await fetch(apiUrl("/incident"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: abort.signal,
       });
       if (result.ok) {
         const data = await result.json();
@@ -468,7 +558,13 @@ export default function Home() {
         console.error("[incident] backend returned %s %s", result.status, result.statusText);
       }
     } catch (error) {
-      console.error("[incident] request to %s failed:", apiUrl("/incident"), error);
+      if ((error as Error)?.name === "AbortError") {
+        console.error("[incident] %s did not answer within 12s -- it is probably asleep or not deployed.", apiUrl("/incident"));
+      } else {
+        console.error("[incident] request to %s failed:", apiUrl("/incident"), error);
+      }
+    } finally {
+      window.clearTimeout(giveUp);
     }
 
     // Falling back keeps the console usable, but it must never be
