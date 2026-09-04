@@ -272,11 +272,6 @@ real and belong together: Featherless was attempted first, hit its 60 s
 budget without responding, and Groq answered in the remaining ~16 s.
 See `generation_provider` below.
 
-**The other captured examples in this section predate the
-`generation_provider` field** and were not re-run for it. Every
-`/incident` response carries it; the older bodies below simply were not
-recaptured after it was added.
-
 | Field | Meaning |
 |---|---|
 | `severity` | `low` `medium` `high` `critical`. Exactly one of these four, always |
@@ -358,23 +353,24 @@ Four values. Three of them produce a grounded answer, and they are
 separate boolean so existing callers do not break; new callers should
 read `retrieval_mode`, which distinguishes cases `grounded` cannot.
 
-**`substance_unknown` is the one that will hurt you.** The response looks
-completely normal — 200, `grounded: true`, real sources, confident
-steps — and the safety data is about a *different chemical*. This is a
-real captured response for `substance_code: "TOLUENE"`, which the
-corpus has no sheet for:
+**`substance_unknown` is the one that will hurt you**, and it is
+deceptive in a way that is worth looking at closely. The response looks
+completely normal — 200, `grounded: true`, real source filenames,
+confident steps. This is a real captured response for `substance_code:
+"TOLUENE"`, which the corpus has no sheet for:
 
 ```json
 {
   "severity": "high",
   "steps": [
-    "Evacuate the immediate area and isolate it.",
-    "Wear alkali-resistant suit, gloves, boots, and full face protection.",
-    "Contain the spill with dry inert material — dry sand, earth, or a proprietary absorbent.",
-    "Prevent entry to drains, sewers, and watercourses."
+    "Evacuate the immediate area and isolate the spill.",
+    "Eliminate all ignition sources in the vicinity.",
+    "Contain the spill with dry inert absorbent such as sand, preventing entry to drains.",
+    "Recover the absorbent and spilled material into a labelled container while wearing protective suit, gloves, boots and full-face respirator.",
+    "Notify control and await professional cleanup."
   ],
-  "contraindication": "Do not wash a bulk solid spill down with water as the first action.",
-  "spoken_alert": "Evacuate the chemical handling bay immediately and report to the muster point.",
+  "contraindication": "Do not use water to wash or dilute the spilled toluene.",
+  "spoken_alert": "Evacuate BAY 02, isolate the spill, and stop all ignition sources now.",
   "spoken_alert_translated": false,
   "substance_name": "Toluene",
   "grounded": true,
@@ -385,16 +381,26 @@ corpus has no sheet for:
     "sds_chlorine.md",
     "sds_sulphuric_acid.md"
   ],
-  "latency_ms": 9777.17
+  "generation_provider": "groq",
+  "latency_ms": 77329.79
 }
 ```
 
-Toluene is a flammable liquid. That answer prescribes **alkali-resistant
-PPE** and warns about a **bulk solid spill** — it is caustic soda
-procedure, retrieved because caustic soda was the nearest thing in the
-corpus, and it says nothing about ignition sources or vapour. Nothing in
-the body flags this except `retrieval_mode`. **Do not present
-`substance_unknown` output as substance-specific guidance.**
+Read `retrieved_sources` there: ammonia, caustic soda, chlorine and
+sulphuric acid. **Not one of them is toluene**, and not one of them
+mentions ignition sources — yet the advice about ignition sources is
+sound, because the model supplied it from its own training rather than
+from the excerpts it was given. So the answer is plausible *and*
+`retrieved_sources` is a list of four documents that did not produce it.
+
+That is the trap. `substance_unknown` does not reliably look wrong. It
+may read as competent substance-specific guidance while being
+ungrounded in everything it cites — and on a different substance, or a
+different day, the model may instead lean on those wrong-substance
+excerpts and tell you to treat a flammable liquid like a corrosive.
+Nothing in the body distinguishes those two cases. **Do not present
+`substance_unknown` output as substance-specific guidance, and do not
+cite `retrieved_sources` as its provenance.**
 
 `substance_unmapped` carries the same caveat with a different cause —
 nobody claimed a code and got it wrong, the claim was never made:
@@ -403,13 +409,14 @@ nobody claimed a code and got it wrong, the claim was never made:
 {
   "severity": "high",
   "steps": [
-    "Raise the alarm and evacuate crosswind then upwind.",
-    "Account for personnel by name.",
-    "Isolate the area for at least 100 metres in all directions.",
-    "Do not enter the area to attempt identification or containment."
+    "Raise the alarm and begin evacuation moving cross-wind then up-wind.",
+    "Establish an isolation zone of at least 100 metres radius around the drum.",
+    "Only responders equipped with self-contained breathing apparatus and protective clothing may approach.",
+    "Sweep the dry white solid into a labelled container, avoiding dust; do not wash with water yet.",
+    "Prevent any material from entering drains, sewers or watercourses."
   ],
-  "contraindication": "Do not allow water to come into contact with the unidentified substance.",
-  "spoken_alert": "Evacuate crosswind and upwind immediately. Account for all personnel. Stay clear of the chemical handling bay.",
+  "contraindication": "Do not apply water directly to the leaking drum.",
+  "spoken_alert": "All personnel evacuate cross-wind, then up-wind, and await further instructions!",
   "spoken_alert_translated": false,
   "substance_name": "Unidentified white crystalline solid",
   "grounded": true,
@@ -419,7 +426,8 @@ nobody claimed a code and got it wrong, the claim was never made:
     "sds_caustic_soda.md",
     "sds_chlorine.md"
   ],
-  "latency_ms": 7672.07
+  "generation_provider": "groq",
+  "latency_ms": 6144.49
 }
 ```
 
@@ -465,19 +473,21 @@ answers, from the model's general knowledge instead of the corpus:
 {
   "severity": "critical",
   "steps": [
-    "Evacuate all personnel from BAY-04 immediately.",
-    "Seal off BAY-04 and adjacent areas to prevent gas spread.",
-    "Notify emergency services and the on-site HSE team.",
-    "Activate the emergency ventilation system if safe to do so."
+    "Evacuate all personnel from Bay four and establish a safe perimeter.",
+    "Shut off the pump and isolate the chlorine source only if it can be done without entering the leak zone.",
+    "Don self-contained breathing apparatus before any entry into the affected area.",
+    "Activate emergency ventilation fans to disperse the gas.",
+    "Notify the emergency response team and begin decontamination after the leak is controlled."
   ],
-  "contraindication": "Do not attempt to manually stop the leak without proper protective equipment.",
-  "spoken_alert": "All personnel evacuate BAY-04 immediately due to chlorine gas leak. Seal off area and call emergency services now.",
+  "contraindication": "Do not enter the leak area without a self-contained breathing apparatus.",
+  "spoken_alert": "All personnel, evacuate BAY four immediately, avoid the leak, and await further instructions.",
   "spoken_alert_translated": false,
   "substance_name": "Chlorine gas",
   "grounded": false,
   "retrieval_mode": "unavailable",
   "retrieved_sources": [],
-  "latency_ms": 8976.44
+  "generation_provider": "groq",
+  "latency_ms": 3139.07
 }
 ```
 
@@ -498,13 +508,13 @@ same provider chain `/translate` uses.
 {
   "severity": "critical",
   "steps": [
-    "Immediately flush affected eye with large quantities of clean water for at least 30 minutes.",
-    "Hold eyelids apart to ensure thorough irrigation.",
-    "Continue irrigation during transport to medical care.",
-    "Remove contaminated clothing, footwear, and watch straps if safe to do so."
+    "Activate the nearest emergency eyewash station immediately.",
+    "Irrigate the eyes with a strong, continuous flow of clean water, holding the eyelids apart, for at least thirty minutes.",
+    "Maintain full-flow irrigation while transporting the casualty to medical care.",
+    "Do not apply any neutralising chemicals or alkali to the eyes."
   ],
-  "contraindication": "Do not attempt to neutralise acid in the eye with any alkali.",
-  "spoken_alert": "BAY-07 में तुरंत आँख धोना आवश्यक है। 30 मिनट तक पानी से धोएँ। अभी चिकित्सा सहायता प्राप्त करें।",
+  "contraindication": "Do not attempt to neutralise the acid with any alkali or other chemical.",
+  "spoken_alert": "आपातकाल! आँख में अम्ल लग गया – तुरंत आँखा धुलाई सक्रिय करें, आँखों को लगातार तीस मिनट तक धोते रहें, और तुरंत चिकित्सा सहायता प्राप्त करें!",
   "spoken_alert_translated": true,
   "substance_name": "Sulphuric acid (98%)",
   "grounded": true,
@@ -513,12 +523,10 @@ same provider chain `/translate` uses.
     "reg_osha_excerpts.md",
     "sds_sulphuric_acid.md"
   ],
-  "latency_ms": 8337.98
+  "generation_provider": "groq",
+  "latency_ms": 4081.28
 }
 ```
-
-Note that `BAY-07` came through byte-exact, the same way `/translate`
-preserves identifiers.
 
 If the translation chain is unavailable, the **English** alert is
 returned instead, with `spoken_alert_translated: false`:
@@ -527,13 +535,13 @@ returned instead, with `spoken_alert_translated: false`:
 {
   "severity": "critical",
   "steps": [
-    "Immediately flush affected eyes with clean water for at least 30 minutes.",
+    "Immediately flush affected eye with large quantities of water for at least 30 minutes.",
     "Hold eyelids apart during irrigation to ensure thorough flushing.",
     "Continue irrigation during transport to medical care.",
-    "Remove contaminated clothing, footwear, and accessories after starting irrigation."
+    "Check for and remove any remaining acid residue from the face and hands."
   ],
-  "contraindication": "Do not attempt to neutralize the acid with any alkali.",
-  "spoken_alert": "Immediate eye irrigation required in BAY-07 for acid exposure. Seek medical help now.",
+  "contraindication": "Do not attempt to neutralise the acid in the eye with any alkali.",
+  "spoken_alert": "Immediate eye irrigation required in BAY-07 for acid splash. Flush continuously and seek medical help.",
   "spoken_alert_translated": false,
   "substance_name": "Sulphuric acid (98%)",
   "grounded": true,
@@ -542,7 +550,8 @@ returned instead, with `spoken_alert_translated: false`:
     "reg_osha_excerpts.md",
     "sds_sulphuric_acid.md"
   ],
-  "latency_ms": 6892.94
+  "generation_provider": "featherless",
+  "latency_ms": 10179.19
 }
 ```
 
