@@ -190,8 +190,9 @@ judgement grounded in them, and localizes the spoken alert.
 ```json
 {
   "bay_id": "BAY-04",
-  "substance_code": "CL2",
-  "incident_type": "gas leak detected near the pump pit",
+  "substance_code": "NAOH",
+  "substance_name": "Sodium hydroxide (50% solution)",
+  "incident_type": "caustic burn to the forearm",
   "target_lang": "en"
 }
 ```
@@ -199,30 +200,45 @@ judgement grounded in them, and localizes the spoken alert.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `bay_id` | string | yes | 1–200 characters. Free text; echoed into the response for context |
-| `substance_code` | string | yes | 1–200 characters. **Open vocabulary** — any string. `CL2`, `NH3`, `H2SO4`, `NAOH` have documents in the corpus |
+| `substance_code` | string \| **null** | yes (may be null) | 1–200 characters. The retrieval key. **Null means "could not be mapped to a known code"** — see below. Empty string is a **400**, not a synonym for null |
+| `substance_name` | string | yes | 1–200 characters. Human-readable, for display. Echoed back verbatim; never used for filtering |
 | `incident_type` | string | yes | 1–200 characters. Open vocabulary, e.g. `gas leak`, `acid splash to the eyes` |
 | `target_lang` | string | yes | One of `bn` `en` `hi` `te` `ur`. Anything else is a **400** |
+
+**The two substance fields do different jobs.** `substance_code` selects
+which documents are retrieved; `substance_name` is display text that
+travels through to the compliance PDF unchanged. Sending a name in the
+code field will not break anything, but it will not match a document
+either — it will be reported as `substance_unknown` below.
+
+**Null and empty string are not the same.** `null` is the documented way
+to say "the detecting side could not map this substance", and it takes
+a defined retrieval path. `""` is rejected with a 400, deliberately: if
+a caller emits empty strings where it means to emit nulls, that is a bug
+worth surfacing rather than silently reinterpreting.
 
 **200:**
 
 ```json
 {
-  "severity": "critical",
+  "severity": "high",
   "steps": [
-    "Raise the alarm and evacuate BAY-04 immediately, moving crosswind first, then upwind.",
-    "Account for all personnel by name, ensuring no one is in low-lying areas.",
-    "Establish a 100-metre isolation zone, extending downwind, and deny entry to anyone without breathing apparatus.",
-    "Trained personnel wearing appropriate PPE should attempt to shut off the supply at the source if safe to do so."
+    "Flush affected area with large quantities of running water for at least 30 minutes.",
+    "Remove all contaminated clothing, footwear, and jewellery while flushing.",
+    "Continue flushing until the slippery, soapy feel of the skin has gone.",
+    "Seek immediate medical attention."
   ],
-  "contraindication": "Do not attempt repairs on a pressurised system.",
-  "spoken_alert": "Evacuate BAY-04 immediately. Move crosswind, then upwind. Account for all personnel by name.",
+  "contraindication": "Do not attempt to neutralise the caustic with acidic solutions.",
+  "spoken_alert": "Immediate water rinse required for sodium hydroxide burn in BAY-04. Seek medical help now.",
   "spoken_alert_translated": false,
+  "substance_name": "Sodium hydroxide (50% solution)",
   "grounded": true,
+  "retrieval_mode": "substance_matched",
   "retrieved_sources": [
-    "reg_factories_act_excerpts.md",
-    "sds_chlorine.md"
+    "reg_osha_excerpts.md",
+    "sds_caustic_soda.md"
   ],
-  "latency_ms": 28549.06
+  "latency_ms": 16432.1
 }
 ```
 
@@ -233,9 +249,111 @@ judgement grounded in them, and localizes the spoken alert.
 | `contraindication` | The single most dangerous thing **not** to do here |
 | `spoken_alert` | One sentence written to be read aloud. Under ~25 words, no markdown |
 | `spoken_alert_translated` | Whether `spoken_alert` is actually in `target_lang`. **Read this** |
+| `substance_name` | Echoed back exactly as sent, for display and for the compliance PDF |
 | `grounded` | Whether the answer was built from retrieved documents. **Read this** |
+| `retrieval_mode` | How the corpus was searched, and how far to trust the sources. **Read this** |
 | `retrieved_sources` | The corpus files the answer was drawn from. Empty when `grounded` is false |
 | `latency_ms` | Server-side work only. Dominated by the model call |
+
+### `retrieval_mode`: how much the sources are worth
+
+Four values. Three of them produce a grounded answer, and they are
+**not equally trustworthy**.
+
+| Value | Meaning | `grounded` |
+|---|---|---|
+| `substance_matched` | A code was given and the corpus has documents for it. The SDS excerpts are about the substance you named. | `true` |
+| `substance_unknown` | A code was given and the corpus has **nothing** under it. Fell back to unfiltered semantic search. | `true` |
+| `substance_unmapped` | `substance_code` was `null`. Same fallback, different cause. | `true` |
+| `unavailable` | No index. Answer comes from the model's general knowledge. | `false` |
+
+`grounded` is exactly `retrieval_mode != "unavailable"`. It is kept as a
+separate boolean so existing callers do not break; new callers should
+read `retrieval_mode`, which distinguishes cases `grounded` cannot.
+
+**`substance_unknown` is the one that will hurt you.** The response looks
+completely normal — 200, `grounded: true`, real sources, confident
+steps — and the safety data is about a *different chemical*. This is a
+real captured response for `substance_code: "TOLUENE"`, which the
+corpus has no sheet for:
+
+```json
+{
+  "severity": "high",
+  "steps": [
+    "Evacuate the immediate area and isolate it.",
+    "Wear alkali-resistant suit, gloves, boots, and full face protection.",
+    "Contain the spill with dry inert material — dry sand, earth, or a proprietary absorbent.",
+    "Prevent entry to drains, sewers, and watercourses."
+  ],
+  "contraindication": "Do not wash a bulk solid spill down with water as the first action.",
+  "spoken_alert": "Evacuate the chemical handling bay immediately and report to the muster point.",
+  "spoken_alert_translated": false,
+  "substance_name": "Toluene",
+  "grounded": true,
+  "retrieval_mode": "substance_unknown",
+  "retrieved_sources": [
+    "sds_ammonia.md",
+    "sds_caustic_soda.md",
+    "sds_chlorine.md",
+    "sds_sulphuric_acid.md"
+  ],
+  "latency_ms": 9777.17
+}
+```
+
+Toluene is a flammable liquid. That answer prescribes **alkali-resistant
+PPE** and warns about a **bulk solid spill** — it is caustic soda
+procedure, retrieved because caustic soda was the nearest thing in the
+corpus, and it says nothing about ignition sources or vapour. Nothing in
+the body flags this except `retrieval_mode`. **Do not present
+`substance_unknown` output as substance-specific guidance.**
+
+`substance_unmapped` carries the same caveat with a different cause —
+nobody claimed a code and got it wrong, the claim was never made:
+
+```json
+{
+  "severity": "high",
+  "steps": [
+    "Raise the alarm and evacuate crosswind then upwind.",
+    "Account for personnel by name.",
+    "Isolate the area for at least 100 metres in all directions.",
+    "Do not enter the area to attempt identification or containment."
+  ],
+  "contraindication": "Do not allow water to come into contact with the unidentified substance.",
+  "spoken_alert": "Evacuate crosswind and upwind immediately. Account for all personnel. Stay clear of the chemical handling bay.",
+  "spoken_alert_translated": false,
+  "substance_name": "Unidentified white crystalline solid",
+  "grounded": true,
+  "retrieval_mode": "substance_unmapped",
+  "retrieved_sources": [
+    "sds_ammonia.md",
+    "sds_caustic_soda.md",
+    "sds_chlorine.md"
+  ],
+  "latency_ms": 7672.07
+}
+```
+
+### Which codes the corpus can actually ground
+
+The detecting side currently knows eleven codes. **This corpus has
+documents for four of them.**
+
+| Grounded (`substance_matched`) | No documents (`substance_unknown`) |
+|---|---|
+| `CL2` `NH3` `H2SO4` `NAOH` | `HCL` `ACETONE` `TOLUENE` `METHANOL` `LPG` `DIESEL` `PETROL` |
+
+Note the shape of that gap: six of the seven unsupported codes are
+**flammables**, and all four supported sheets are toxics and
+corrosives. A petrol or LPG incident will retrieve eye-irrigation and
+evacuation procedure, because that is the closest thing present.
+
+This is a property of the sample corpus, not a defect to be worked
+around in a client. It resolves when real source documents replace the
+illustrative set — until then, seven of eleven codes retrieve by
+unfiltered fallback and say so in `retrieval_mode`.
 
 ### The corpus is illustrative, not real
 
@@ -258,19 +376,21 @@ answers, from the model's general knowledge instead of the corpus:
 
 ```json
 {
-  "severity": "high",
+  "severity": "critical",
   "steps": [
     "Evacuate all personnel from BAY-04 immediately.",
-    "Activate the emergency alarm and notify the safety team.",
-    "Close the valves to the affected area if safe to do so.",
-    "Do not approach the leak without proper PPE."
+    "Seal off BAY-04 and adjacent areas to prevent gas spread.",
+    "Notify emergency services and the on-site HSE team.",
+    "Activate the emergency ventilation system if safe to do so."
   ],
-  "contraindication": "Do not attempt to seal the leak without proper respiratory protection.",
-  "spoken_alert": "All personnel evacuate BAY-04 immediately due to a chlorine gas leak. Do not re-enter until cleared by safety.",
+  "contraindication": "Do not attempt to manually stop the leak without proper protective equipment.",
+  "spoken_alert": "All personnel evacuate BAY-04 immediately due to chlorine gas leak. Seal off area and call emergency services now.",
   "spoken_alert_translated": false,
+  "substance_name": "Chlorine gas",
   "grounded": false,
+  "retrieval_mode": "unavailable",
   "retrieved_sources": [],
-  "latency_ms": 10406.9
+  "latency_ms": 8976.44
 }
 ```
 
@@ -291,20 +411,22 @@ same provider chain `/translate` uses.
 {
   "severity": "critical",
   "steps": [
-    "Immediately flush eyes with clean water for at least 30 minutes, holding eyelids apart.",
+    "Immediately flush affected eye with large quantities of clean water for at least 30 minutes.",
+    "Hold eyelids apart to ensure thorough irrigation.",
     "Continue irrigation during transport to medical care.",
-    "Do not attempt to neutralize acid in the eyes with any substance.",
-    "Check for and remove any contaminated clothing, being careful not to spread the acid."
+    "Remove contaminated clothing, footwear, and watch straps if safe to do so."
   ],
-  "contraindication": "Do not attempt to neutralize acid in the eyes with any substance.",
-  "spoken_alert": "BAY-07 में तत्काल नेत्र धुलाई आवश्यक है। 30 मिनट के लिए पानी से धोएँ। तत्काल चिकित्सा सहायता प्राप्त करें।",
+  "contraindication": "Do not attempt to neutralise acid in the eye with any alkali.",
+  "spoken_alert": "BAY-07 में तुरंत आँख धोना आवश्यक है। 30 मिनट तक पानी से धोएँ। अभी चिकित्सा सहायता प्राप्त करें।",
   "spoken_alert_translated": true,
+  "substance_name": "Sulphuric acid (98%)",
   "grounded": true,
+  "retrieval_mode": "substance_matched",
   "retrieved_sources": [
     "reg_osha_excerpts.md",
     "sds_sulphuric_acid.md"
   ],
-  "latency_ms": 11030.47
+  "latency_ms": 8337.98
 }
 ```
 
@@ -319,19 +441,21 @@ returned instead, with `spoken_alert_translated: false`:
   "severity": "critical",
   "steps": [
     "Immediately flush affected eyes with clean water for at least 30 minutes.",
+    "Hold eyelids apart during irrigation to ensure thorough flushing.",
     "Continue irrigation during transport to medical care.",
-    "Ensure the casualty does not rub their eyes or attempt to neutralize the acid.",
-    "Check for and remove any contaminated clothing, footwear, and accessories."
+    "Remove contaminated clothing, footwear, and accessories after starting irrigation."
   ],
-  "contraindication": "Do not attempt to neutralise acid in the eye with any alkali.",
-  "spoken_alert": "Immediate eye wash required for acid exposure in BAY-07. Flush eyes continuously with water.",
+  "contraindication": "Do not attempt to neutralize the acid with any alkali.",
+  "spoken_alert": "Immediate eye irrigation required in BAY-07 for acid exposure. Seek medical help now.",
   "spoken_alert_translated": false,
+  "substance_name": "Sulphuric acid (98%)",
   "grounded": true,
+  "retrieval_mode": "substance_matched",
   "retrieved_sources": [
     "reg_osha_excerpts.md",
     "sds_sulphuric_acid.md"
   ],
-  "latency_ms": 41960.89
+  "latency_ms": 6892.94
 }
 ```
 
@@ -367,6 +491,7 @@ better outcome. Whitespace and letter case are normalised, because
 | **400** | `text` over 5000 chars | `{"detail": "text exceeds 5000 characters (got 6000)"}` |
 | **400** | `target_language` empty | `{"detail": "target_language must not be empty"}` |
 | **400** | `/incident` field empty | `{"detail": "bay_id must not be empty"}` |
+| **400** | `substance_code` is `""` | `{"detail": "substance_code must be a non-empty string or null"}` |
 | **400** | `/incident` field over 200 chars | `{"detail": "incident_type exceeds 200 characters (got 300)"}` |
 | **400** | `target_lang` not supported | `{"detail": "target_lang must be one of: bn, en, hi, te, ur"}` |
 | **401** | `API_KEY` set, header wrong/missing | `{"detail": "invalid or missing X-API-Key"}` |
@@ -470,3 +595,20 @@ until something has actually asked for an assessment, and a `true` from
 five minutes ago is not a promise about this request. `grounded` on the
 response you are holding is the only field that describes that
 response.
+
+**A 200 guarantees shape, not correctness — this matters most if you
+are printing the response onto a document.** Validation checks that
+`severity` is one of the four allowed values and that `steps`,
+`contraindication` and `spoken_alert` are non-empty strings in the
+right places. It cannot check that what those strings *say* is sound,
+and no field in the response asserts that they are. Observed
+2026-09-04: a request that passed validation returned
+`"contraindication": "Do not attempt to neutral001"` — truncated and
+corrupted mid-word by the model, structurally valid, and useless. It is
+rare, and it is not something this API can promise never happens; a
+"does this look sensible" heuristic would be a guess wearing the
+costume of a check, and would fail in the other direction by rejecting
+sound text. If a human signs off on a document built from these
+responses, that sign-off is doing real work — treat it as the control,
+not as a formality. `retrieval_mode` and `grounded` tell you where the
+content came from; nothing tells you it is right.
