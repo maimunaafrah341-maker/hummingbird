@@ -168,7 +168,7 @@ function SystemStatus() {
   );
 }
 
-function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLevel, videoRef, onReset }: { response: IncidentResponse; context: { location: string; substance: string; incidentType: IncidentType; language: string }; cameraOn: boolean; micOn: boolean; fieldLevel: number; voiceLevel: number; videoRef: RefObject<HTMLVideoElement | null>; onReset: () => void }) {
+function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLevel, videoRef, onReset, fromFallback = false }: { response: IncidentResponse; context: { location: string; substance: string; incidentType: IncidentType; language: string }; cameraOn: boolean; micOn: boolean; fieldLevel: number; voiceLevel: number; videoRef: RefObject<HTMLVideoElement | null>; onReset: () => void; fromFallback?: boolean }) {
   const isCritical = response.severity === "CRITICAL";
   const [evacuationConfirmed, setEvacuationConfirmed] = useState(false);
   const [autoStopped, setAutoStopped] = useState(false);
@@ -240,6 +240,11 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
           <span><strong>HAZARD WATCH</strong><small>Operational safety network</small></span>
         </div>
         <div className="lockout-badge"><LockKeyhole size={15} /> Protocol locked</div>
+        {fromFallback && (
+          <div className="lockout-badge" role="alert" style={{ background: "#7f1d1d", color: "#fff", borderColor: "#fca5a5" }}>
+            <AlertTriangle size={15} /> DEMO FALLBACK &middot; backend unreachable
+          </div>
+        )}
         <div className="lockout-time"><Clock3 size={15} /> {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
       </header>
 
@@ -293,6 +298,7 @@ export default function Home() {
   const [language, setLanguage] = useState("English");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lockout, setLockout] = useState<IncidentResponse | null>(null);
+  const [lockoutFromFallback, setLockoutFromFallback] = useState(false);
 
   const [cameraOn, setCameraOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -418,6 +424,7 @@ export default function Home() {
     if (!micOn) await toggleMic();
     const payload = { location, substance, incident_type: incidentType, language, media: { camera: cameraOn || Boolean(cameraStreamRef.current), microphone: micOn || Boolean(micStreamRef.current) } };
     let response = defaultResponse;
+    let live = false;
 
     try {
       const result = await fetch(apiUrl("/incident"), {
@@ -427,13 +434,29 @@ export default function Home() {
       });
       if (result.ok) {
         const data = await result.json();
-        if (data?.severity && Array.isArray(data?.steps) && data?.spoken_alert) response = data as IncidentResponse;
+        if (data?.severity && Array.isArray(data?.steps) && data?.spoken_alert) {
+          response = data as IncidentResponse;
+          live = true;
+        } else {
+          console.error("[incident] backend answered %s but the body did not match the expected shape (severity, steps[], spoken_alert):", result.status, data);
+        }
+      } else {
+        console.error("[incident] backend returned %s %s", result.status, result.statusText);
       }
-    } catch {
-      // The teammate endpoint is not connected yet; continue with the demo response.
+    } catch (error) {
+      console.error("[incident] request to %s failed:", apiUrl("/incident"), error);
+    }
+
+    // Falling back keeps the console usable, but it must never be
+    // mistaken for a real answer -- the locked screen says so, and the
+    // console above says why. Silent fallback is how invented safety
+    // steps get demoed as if a backend produced them.
+    if (!live) {
+      console.error("[incident] SHOWING LOCAL DEMO FALLBACK -- these steps did not come from the backend. Set VITE_API_BASE_URL and rebuild.");
     }
 
     setIsSubmitting(false);
+    setLockoutFromFallback(!live);
     setLockout(response);
   }
 
@@ -455,7 +478,7 @@ export default function Home() {
   }
 
   if (lockout) {
-    return <LockoutView response={lockout} context={{ location, substance, incidentType, language }} cameraOn={cameraOn} micOn={micOn} fieldLevel={fieldLevel} voiceLevel={voiceLevel} videoRef={lockoutVideoRef} onReset={resetConsole} />;
+    return <LockoutView response={lockout} context={{ location, substance, incidentType, language }} cameraOn={cameraOn} micOn={micOn} fieldLevel={fieldLevel} voiceLevel={voiceLevel} videoRef={lockoutVideoRef} onReset={resetConsole} fromFallback={lockoutFromFallback} />;
   }
 
   return (
