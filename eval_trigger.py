@@ -55,6 +55,7 @@ SUITES = [
     ("alert language", ["alert_language.py", "--selftest"]),
     ("incident service", ["incident_api.py", "--selftest"]),
     ("escalation watcher", ["escalation_watcher.py", "--selftest"]),
+    ("bay twin", ["bay_twin.py", "--selftest"]),
     ("incident rehearsal", ["smoke_test.py", "incident", "--no-audio", "--no-open"]),
 ]
 
@@ -175,7 +176,7 @@ def measure_imports():
 
     for module in ("yolo_trigger", "dossier", "webhook_dispatch", "tts_alert",
                    "alert_language", "confidence_router",
-                   "escalation_watcher"):
+                   "escalation_watcher", "bay_twin"):
         data = _snippet(
             "import time,json;"
             "t=time.perf_counter();"
