@@ -249,8 +249,36 @@ documents. The server logs the reason on the first affected request.
 ### `spoken_alert_translated` is not decorative
 
 When `target_lang` is not `en`, the alert is translated through the
-same provider chain `/translate` uses. If that chain is unavailable,
-the **English** alert is returned with `spoken_alert_translated: false`:
+same provider chain `/translate` uses.
+
+**200, translated** (`target_lang: "hi"`, captured 2026-09-04):
+
+```json
+{
+  "severity": "critical",
+  "steps": [
+    "Immediately flush eyes with clean water for at least 30 minutes, holding eyelids apart.",
+    "Continue irrigation during transport to medical care.",
+    "Do not attempt to neutralize acid in the eyes with any substance.",
+    "Check for and remove any contaminated clothing, being careful not to spread the acid."
+  ],
+  "contraindication": "Do not attempt to neutralize acid in the eyes with any substance.",
+  "spoken_alert": "BAY-07 में तत्काल नेत्र धुलाई आवश्यक है। 30 मिनट के लिए पानी से धोएँ। तत्काल चिकित्सा सहायता प्राप्त करें।",
+  "spoken_alert_translated": true,
+  "grounded": true,
+  "retrieved_sources": [
+    "reg_osha_excerpts.md",
+    "sds_sulphuric_acid.md"
+  ],
+  "latency_ms": 11030.47
+}
+```
+
+Note that `BAY-07` came through byte-exact, the same way `/translate`
+preserves identifiers.
+
+If the translation chain is unavailable, the **English** alert is
+returned instead, with `spoken_alert_translated: false`:
 
 ```json
 {
@@ -273,9 +301,11 @@ the **English** alert is returned with `spoken_alert_translated: false`:
 }
 ```
 
-That response was captured with `target_lang: "hi"` on a deployment
-with no `GROQ_API_KEY`/`GEMINI_API_KEY`/`OPENROUTER_API_KEY` set. The
-alert is in English and the flag says so. **Never feed a
+That one was captured with the same `target_lang: "hi"` on a
+deployment with no `GROQ_API_KEY`/`GEMINI_API_KEY`/`OPENROUTER_API_KEY`
+set — the two responses above are the same request against a funded and
+an unfunded translation chain. The alert is in English and the flag
+says so. **Never feed a
 `spoken_alert_translated: false` string to a text-to-speech voice
 configured for the target language** — you will get English words read
 with Hindi phonemes, which is worse than English read as English.
@@ -348,23 +378,38 @@ romanized Telugu ~77.7 on the parent project's eval set. The honest
 claim is *five languages in native script, two also in romanized form,
 one of those two well* — see `EVAL.md`.
 
-**`/incident` has no enforced upper bound on latency. Set your own
-deadline and give up on it yourself.** Normal measured latencies on
-2026-09-04 are **8–42 seconds**, plus a one-time ~22 s embedding-model
-load on the first request of a process. A 30-second client default will
-time out on ordinary successful requests.
+**Budget about 2 minutes for `/incident`, and set a client timeout well
+above 90 seconds.** Normal measured latencies on 2026-09-04 are **8–42
+seconds**, plus a one-time ~22 s embedding-model load on the first
+request of a process. A 30-second client default will time out on
+ordinary successful requests.
 
-But the tail is much worse than the configuration suggests. The
-server's provider call is configured with a 60-second timeout, and that
-value bounds *how long the connection may go silent*, not how long the
-request may take — a provider that keeps trickling bytes never trips
-it. Measured 2026-09-04, both on a 60-second setting: one request ran
-**221 seconds** and then failed, and an identical request that
-**succeeded** took **242 seconds**. The distribution is bimodal, not a
-long smooth tail: most requests finish in under 25 seconds and a
-minority take four minutes. Treat the upper bound as open,
-apply your own deadline in the kiosk, and show the operator something
-truthful while waiting rather than blocking on the response.
+The model call is bounded at **90 seconds total** by a watchdog, and
+that bound covers both the first attempt and the correction retry
+together — a slow first attempt shortens the retry rather than doubling
+the ceiling. If the budget runs out you get a **503**, not a hang.
+
+That watchdog exists because the underlying timeout does not do what it
+looks like it does: the provider call is configured with a 60-second
+timeout, and that value bounds *how long the connection may go silent*,
+not how long the request may take. Measured 2026-09-04 before the
+watchdog, both on that 60-second setting: one request ran **221
+seconds** and failed, and an identical one **succeeded at 242
+seconds**, against a median under 25. The latency distribution is
+bimodal, not a smooth tail.
+
+**One call in the pipeline is still unbounded: the translation of
+`spoken_alert`.** The 90-second watchdog covers the model call only.
+Localization goes through the same provider chain `/translate` uses,
+which has no equivalent bound for exactly the reason above — so a
+non-English `/incident` request can exceed 90 seconds by however long
+that chain takes, and there is no server-side ceiling on it. This is
+invisible on a deployment with no `GROQ_API_KEY`/`GEMINI_API_KEY`/
+`OPENROUTER_API_KEY`, because translation then fails instantly and
+falls back to English; it becomes live the moment one of those keys is
+set. **Apply your own deadline in the kiosk regardless of the
+watchdog**, and show the operator something truthful while waiting
+rather than blocking on the response.
 
 **`/incident` will 429 under back-to-back calls.** The provider bills
 this account by tokens per minute, and an incident prompt is large —
