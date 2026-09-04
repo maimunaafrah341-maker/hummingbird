@@ -545,10 +545,28 @@ main{display:flex;flex:1;min-height:0}
   display:flex;flex-direction:column;min-height:0;
 }
 .rail h2{
-  margin:0;padding:13px 16px;border-bottom:1px solid var(--rule);
+  margin:0;padding:11px 12px 11px 16px;border-bottom:1px solid var(--rule);
   font-size:10px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--mute);font-weight:600;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
 }
+.filter{display:flex;gap:0;border:1px solid var(--rule);border-radius:2px}
+.filter button{
+  background:none;border:0;color:var(--mute);cursor:pointer;
+  font-family:var(--sans);font-size:9px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;padding:5px 9px;
+}
+.filter button + button{border-left:1px solid var(--rule)}
+.filter button[aria-pressed="true"]{background:var(--panel-2);color:var(--text)}
+.filter button:focus-visible{outline:2px solid var(--mute);outline-offset:-2px}
+
+/* Routine traffic runs at several a second on live footage. It stays
+   in the trail -- hiding it would misrepresent the throughput -- but it
+   must not bury the suppression, which is the entry worth reading. */
+.entry.routine{padding:5px 16px;opacity:.62}
+.entry.routine .head{font-size:11px;font-weight:500}
+.entry.routine .sub{font-size:10px}
+.log.key .entry.routine{display:none}
 .log{flex:1;overflow-y:auto;padding:6px 0}
 .entry{
   padding:8px 16px;border-bottom:1px solid var(--rule-soft);
@@ -656,12 +674,15 @@ main{display:flex;flex:1;min-height:0}
 .ackbtn.hidden{display:none}
 
 .empty{
-  grid-column:1/-1;padding:60px 20px;text-align:center;color:var(--mute);
-  font-size:13px;line-height:1.7;
+  grid-column:1/-1;padding:72px 20px;text-align:center;color:var(--mute);
+  font-size:13px;line-height:1.8;
 }
+.empty strong{display:block;color:var(--text);font-size:15px;margin-bottom:6px}
 .empty code{
+  display:inline-block;margin-top:14px;
   font-family:var(--mono);color:var(--text);background:var(--panel-2);
-  padding:2px 6px;border-radius:2px;
+  border:1px solid var(--rule);padding:7px 11px;border-radius:2px;
+  font-size:12px;
 }
 </style>
 </head>
@@ -685,8 +706,13 @@ main{display:flex;flex:1;min-height:0}
 <main>
   <section class="floor" id="floor" aria-label="Bay floor plan"></section>
   <aside class="rail">
-    <h2>Decision trail</h2>
-    <div class="log" id="log" role="log" aria-live="polite"></div>
+    <h2>Decision trail
+      <span class="filter">
+        <button type="button" id="f-key" aria-pressed="true">Key</button>
+        <button type="button" id="f-all" aria-pressed="false">All</button>
+      </span>
+    </h2>
+    <div class="log key" id="log" role="log" aria-live="polite"></div>
   </aside>
 </main>
 
@@ -695,13 +721,20 @@ main{display:flex;flex:1;min-height:0}
 "use strict";
 
 var qs = new URLSearchParams(location.search);
-var SEED = (qs.get("zones") || "BAY-1,BAY-3,BAY-5,BAY-7")
+
+/* No seeded floor plan. Four tiles reading "No signal" look like a
+   mockup, and three of them would stay that way all demo. A bay
+   appears the moment it reports something, so everything on screen is
+   a bay that is really being watched. ?zones= opts back in to a fixed
+   plan for a site whose layout is known. */
+var SEED = (qs.get("zones") || "")
              .split(",").map(function(s){return s.trim();}).filter(Boolean);
 
 var floor = document.getElementById("floor");
 var log = document.getElementById("log");
 var bays = {};
 var live = false;
+var lastSeq = 0;
 var stats = {sup:0, hold:0, inc:0, esc:0, ack:0};
 
 function setStat(k, v){
@@ -809,9 +842,9 @@ requestAnimationFrame(tick);
 
 /* ---- the rail -------------------------------------------------- */
 
-function addEntry(kind, head, sub, at){
+function addEntry(kind, head, sub, at, routine){
   var el = document.createElement("div");
-  el.className = "entry k-" + kind;
+  el.className = "entry k-" + kind + (routine ? " routine" : "");
   var t = document.createElement("time");
   t.textContent = clockText(at);
   var body = document.createElement("div");
@@ -856,7 +889,7 @@ function handle(e){
       bay.detailEl.innerHTML = "<b>" + e.violation + "</b> held &mdash; " +
         (e.reason || "awaiting reconfirmation");
       addEntry("decision", "Held — " + e.zone,
-               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at);
+               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at, true);
 
     } else if (e.action === "suppressed"){
       setStat("sup", stats.sup + 1);
@@ -873,18 +906,18 @@ function handle(e){
       setStat("hold", Math.max(0, stats.hold - 1));
       popHold(bay, "confirmed");
       addEntry("decision", "Reconfirmed — " + e.zone,
-               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at);
+               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at, true);
 
     } else if (e.action === "fire"){
       if (bay.el.classList.contains("offline"))
         setState(bay, "monitoring", "Monitoring");
       popHold(bay, "confirmed");
       addEntry("decision", "Acting now — " + e.zone,
-               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at);
+               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at, true);
 
     } else if (e.action === "ignored"){
       addEntry("decision", "Below floor — " + e.zone,
-               e.violation + " · " + conf(e.confidence), e.at);
+               e.violation + " · " + conf(e.confidence), e.at, true);
     }
     return;
   }
@@ -965,10 +998,29 @@ function setConn(ok, text){
   document.getElementById("conn-t").textContent = text;
 }
 
+(function(){
+  var key = document.getElementById("f-key");
+  var all = document.getElementById("f-all");
+
+  function choose(showAll){
+    log.classList.toggle("key", !showAll);
+    key.setAttribute("aria-pressed", showAll ? "false" : "true");
+    all.setAttribute("aria-pressed", showAll ? "true" : "false");
+  }
+
+  key.addEventListener("click", function(){ choose(false); });
+  all.addEventListener("click", function(){ choose(true); });
+})();
+
 SEED.forEach(makeBay);
-floor.insertAdjacentHTML("beforeend",
-  '<div class="empty">Waiting for the first decision. Start the trigger with ' +
-  '<code>--twin http://127.0.0.1:8001</code>, or run <code>python bay_twin.py --demo</code>.</div>');
+
+if (!SEED.length){
+  floor.insertAdjacentHTML("beforeend",
+    '<div class="empty"><strong>Watching for the first frame.</strong>' +
+    'A bay appears here the moment it reports something — nothing on ' +
+    'this floor is a placeholder.' +
+    '<code>python bay_twin.py --live demo-01-best-13386074.mp4</code></div>');
+}
 
 var src = new EventSource("twin/stream");
 src.addEventListener("live", function(){ live = true; setConn(true, "live"); });
@@ -977,6 +1029,13 @@ src.onerror = function(){ setConn(false, "reconnecting"); live = false; };
 src.onmessage = function(m){
   var e;
   try { e = JSON.parse(m.data); } catch (err) { return; }
+
+  /* EventSource reconnects by itself, and every reconnect replays the
+     buffer. Without this the counters double and old events re-animate.
+     seq is assigned by the bus and is strictly increasing. */
+  if (e.seq && e.seq <= lastSeq) return;
+  if (e.seq) lastSeq = e.seq;
+
   handle(e);
 };
 })();
@@ -1095,6 +1154,114 @@ def demo(port=8010, open_browser=True):
         _open_when_ready(port, url)
 
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+
+
+def live(source, port=8001, zone="BAY-3", substance=None, language="en",
+         open_browser=True, no_downstream=False, max_frames=None):
+    """
+    One command for the whole real path.
+
+    Starts the incident service -- which carries the twin, because
+    incident_api mounts it -- waits for it to answer, opens the floor
+    plan, and then runs the actual detector against `source` in this
+    process.
+
+    Everything on the page is then produced by the real modules: the
+    routing decisions come from ConfidenceRouter watching real frames,
+    and the incidents come from the service assessing them. There is no
+    scripted content anywhere in this mode.
+
+    The service runs as a subprocess rather than a thread so Ctrl-C
+    reaches the camera loop cleanly and uvicorn's signal handling stays
+    out of it.
+    """
+
+    import subprocess
+
+    base = "http://127.0.0.1:%d" % port
+    here = os.path.dirname(os.path.abspath(__file__))
+
+    print("\n  starting the incident service on port %d..." % port,
+          flush=True)
+
+    service = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "incident_api:app",
+         "--port", str(port), "--log-level", "warning"],
+        cwd=here)
+
+    try:
+        if not _wait_for_health(base):
+            service.terminate()
+            print("  the incident service did not come up. Run it by hand:",
+                  flush=True)
+            print("      uvicorn incident_api:app --port %d" % port, flush=True)
+            return 1
+
+        _banner(base + "/twin")
+
+        if open_browser:
+            try:
+                import webbrowser
+                webbrowser.open(base + "/twin")
+            except Exception:
+                pass
+
+        print("  the floor starts empty on purpose -- a bay appears when it",
+              flush=True)
+        print("  reports. Everything you see from here is the real detector.\n",
+              flush=True)
+
+        import confidence_router
+        import yolo_trigger
+
+        twin = Emitter(base)
+        router = confidence_router.ConfidenceRouter(on_decision=twin.decision)
+
+        try:
+            yolo_trigger.run_camera(
+                zone,
+                source_index=source,
+                base=base,
+                substance=substance,
+                language=language,
+                downstream=not no_downstream,
+                max_frames=max_frames,
+                router=router,
+            )
+        finally:
+            twin.close()
+
+        return 0
+
+    finally:
+        # The page stays readable after the clip ends -- the service is
+        # what serves it -- so this only runs on the way out.
+        service.terminate()
+
+        try:
+            service.wait(timeout=10)
+        except Exception:
+            service.kill()
+
+
+def _wait_for_health(base, timeout=60.0):
+    """True once /health answers. The first import of the app is slow."""
+
+    if requests is None:
+        return False
+
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            if requests.get(base + "/health", timeout=1).status_code == 200:
+                return True
+        except Exception:
+            pass
+
+        time.sleep(0.5)
+
+    return False
 
 
 def _banner(url):
@@ -1360,12 +1527,31 @@ def main():
                         help="serve the twin and drive a scripted stream")
     parser.add_argument("--serve", type=int, metavar="PORT",
                         help="serve the twin and wait for real events")
+    parser.add_argument("--live", metavar="SOURCE",
+                        help="the real thing, in one command: start the "
+                             "incident service, open the floor plan, and run "
+                             "the detector against SOURCE (a camera index, a "
+                             "video file, or an image)")
+    parser.add_argument("--zone", default="BAY-3")
+    parser.add_argument("--substance", default=None,
+                        help="substance present in the bay, e.g. 'sodium hydroxide'")
+    parser.add_argument("--language", default="en")
+    parser.add_argument("--no-downstream", action="store_true",
+                        help="open incidents but skip TTS/PDF/webhook")
+    parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--port", type=int, default=8010)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
 
     if args.selftest:
         return 0 if selftest() else 1
+
+    if args.live:
+        return live(args.live, port=args.port if args.port != 8010 else 8001,
+                    zone=args.zone, substance=args.substance,
+                    language=args.language, open_browser=not args.no_open,
+                    no_downstream=args.no_downstream,
+                    max_frames=args.max_frames)
 
     if args.serve:
         serve(args.serve)
