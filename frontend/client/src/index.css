@@ -615,3 +615,38 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   color: #8fdcae; font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
 }
 .note-row p { margin: 0; font-size: 12.5px; line-height: 1.55; color: #9aa5b1; white-space: pre-wrap; }
+
+/* --- Press and hold to broadcast --------------------------------
+   Replaces a typed confirmation phrase. Same property -- a broadcast
+   cannot be one reflexive click -- but reachable by someone wearing
+   gloves in a bay, which typing is not. ---------------------------- */
+
+.hold-label { margin: 0 0 12px; font-size: 14px; color: #c2ccd8; }
+.hold-label strong {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  background: #1c232c; border: 1px solid #2c3540; padding: 2px 8px;
+  border-radius: 2px; color: #fff; letter-spacing: .05em; font-size: 13px;
+}
+
+.btn-hold {
+  position: relative; flex: 1; overflow: hidden;
+  padding: 14px 20px; border-radius: 3px; cursor: pointer;
+  background: #2a1418; border: 1px solid #e0484d; color: #ff9ea1;
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  letter-spacing: .13em; text-transform: uppercase;
+  touch-action: none;            /* a hold must not scroll the page */
+  user-select: none;
+}
+.btn-hold:hover { background: #331a1f; }
+.btn-hold:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.btn-hold-active { border-color: #ff6b6f; }
+
+/* The fill IS the feedback -- it says how much longer, which a spinner
+   would not. Width is driven from rAF, so no CSS transition: a
+   transition would lag the pointer release and keep filling after the
+   operator has already let go. */
+.btn-hold-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: #e0484d; opacity: .38; pointer-events: none;
+}
+.btn-hold-text { position: relative; z-index: 1; }

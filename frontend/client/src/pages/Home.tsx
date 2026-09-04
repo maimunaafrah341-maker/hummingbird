@@ -387,12 +387,57 @@ function ReviewView({ response, context, onConfirm, onCancel, fromFallback }: {
   onCancel: () => void;
   fromFallback: boolean;
 }) {
-  const [typed, setTyped] = useState("");
+  // Press and hold, not a typed phrase.
+  //
+  // The typed confirmation satisfied the review -- a broadcast must not
+  // be one reflexive click -- but it was the wrong interaction for the
+  // person doing it. An operator standing in a bay with a chlorine leak
+  // is wearing gloves. They cannot type DECLARE BAY-1, and asking them
+  // to is asking them to take the gloves off during a gas release.
+  //
+  // Holding is deliberate in the same way and impossible to do by
+  // accident or muscle memory, which is the property that mattered. It
+  // is also what real plant HMIs use, for this exact reason.
+  const HOLD_MS = 1200;
+  const [held, setHeld] = useState(0);
+  const holdFrame = useRef<number | null>(null);
+  const holdStart = useRef(0);
+  const fired = useRef(false);
+
+  function stopHold() {
+    if (holdFrame.current !== null) cancelAnimationFrame(holdFrame.current);
+    holdFrame.current = null;
+    setHeld(0);
+  }
+
+  function startHold() {
+    if (fired.current) return;
+    holdStart.current = performance.now();
+
+    const tick = () => {
+      const progress = Math.min(1, (performance.now() - holdStart.current) / HOLD_MS);
+      setHeld(progress);
+
+      if (progress >= 1) {
+        // Guarded: rAF can deliver one more frame after the state
+        // update, and broadcasting twice is not a harmless duplicate.
+        fired.current = true;
+        stopHold();
+        onConfirm();
+        return;
+      }
+
+      holdFrame.current = requestAnimationFrame(tick);
+    };
+
+    holdFrame.current = requestAnimationFrame(tick);
+  }
+
+  useEffect(() => stopHold, []);
 
   // "Bay-3, Reactor B" -> "DECLARE BAY-3". The asset, not the prose.
   const asset = context.location.split(",")[0].trim().toUpperCase();
   const phrase = `DECLARE ${asset}`;
-  const armed = typed.trim().toUpperCase() === phrase;
 
   // Rules tier or model tier -- the operator is entitled to know which
   // one wrote what they are about to broadcast to a plant.
@@ -479,28 +524,35 @@ function ReviewView({ response, context, onConfirm, onCancel, fromFallback }: {
         </div>
 
         <div className="review-confirm">
-          <label htmlFor="declare-input">
-            To broadcast, type <code>{phrase}</code>
-          </label>
-          <input
-            id="declare-input"
-            className="declare-input"
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            placeholder={phrase}
-            autoComplete="off"
-            spellCheck={false}
-            aria-describedby="declare-help"
-          />
-          <p id="declare-help" className="declare-help">
-            Broadcasting locks the console and alerts the response network. It cannot be undone from this screen.
+          <p className="hold-label">
+            Press and hold to broadcast <strong>{phrase}</strong>
           </p>
           <div className="review-actions">
             <button type="button" className="btn-cancel" onClick={onCancel}>Cancel</button>
-            <button type="button" className="btn-broadcast" onClick={onConfirm} disabled={!armed}>
-              {armed ? "Confirm broadcast" : "Type the phrase to enable"}
+            <button
+              type="button"
+              className={held > 0 ? "btn-hold btn-hold-active" : "btn-hold"}
+              aria-describedby="hold-help"
+              onPointerDown={startHold}
+              onPointerUp={stopHold}
+              onPointerLeave={stopHold}
+              onPointerCancel={stopHold}
+              // Keyboard parity: a hold has to be reachable without a
+              // pointer, or the one control that matters is the one
+              // control some operators cannot use.
+              onKeyDown={(e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); startHold(); } }}
+              onKeyUp={(e) => { if (e.key === " " || e.key === "Enter") stopHold(); }}
+              onBlur={stopHold}
+            >
+              <span className="btn-hold-fill" style={{ width: `${held * 100}%` }} />
+              <span className="btn-hold-text">
+                {held > 0 ? "Keep holding…" : "Hold to broadcast"}
+              </span>
             </button>
           </div>
+          <p id="hold-help" className="declare-help">
+            Broadcasting locks the console and alerts the response network. It cannot be undone from this screen. Release early to cancel.
+          </p>
         </div>
       </section>
     </main>
