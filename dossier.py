@@ -36,8 +36,8 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import (KeepTogether, Paragraph, SimpleDocTemplate,
-                                Spacer, Table, TableStyle)
+from reportlab.platypus import (Image, KeepTogether, Paragraph,
+                                SimpleDocTemplate, Spacer, Table, TableStyle)
 
 
 # ============================================================
@@ -222,7 +222,8 @@ def _as_steps(steps):
 # THE REPORT
 # ============================================================
 
-def build_dossier(event, response, out_dir=None, filename=None, open_after=False):
+def build_dossier(event, response, out_dir=None, filename=None, open_after=False,
+                  evidence=None):
     """
     Write the incident PDF and return its path.
 
@@ -230,6 +231,13 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
     service returned. Missing fields render as "not recorded" rather
     than raising -- a report with a gap in it is still evidence, a
     traceback is not.
+
+    `evidence` is an optional path to the annotated frame that triggered
+    the incident. It changes what this document is: "NO-Hardhat,
+    confidence 0.804" is a machine's assertion, the same claim with the
+    frame beside it is something a person can check. A missing or
+    unreadable image is skipped with a note, never fatal -- the report
+    still has to come out.
     """
 
     out_dir = out_dir or OUTPUT_DIR
@@ -365,6 +373,35 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
         ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#E4E4E7")),
     ]))
     story.append(facts_table)
+
+    # -- the evidence frame ------------------------------------------
+    if evidence:
+        story.append(Paragraph("Evidence", heading_style))
+
+        try:
+            from reportlab.lib.utils import ImageReader
+
+            width, height = ImageReader(evidence).getSize()
+            display_width = min(165 * mm, 165 * mm)
+            display_height = display_width * height / float(width)
+
+            # Keep it off a second page: cap the height and let the width
+            # follow, rather than letting a portrait frame push the
+            # response steps somewhere nobody looks.
+            if display_height > 105 * mm:
+                display_height = 105 * mm
+                display_width = display_height * width / float(height)
+
+            story.append(Image(evidence, width=display_width, height=display_height))
+            story.append(Paragraph(
+                "Frame captured at the moment of detection, with the model's "
+                "boxes drawn on it. %s" % os.path.basename(evidence), footer_style))
+
+        except Exception as e:
+            # An unreadable image must not cost us the report.
+            story.append(Paragraph(
+                "Evidence frame could not be embedded (%s: %s). Expected at: %s"
+                % (type(e).__name__, e, evidence), footer_style))
 
     # -- contraindication, before the steps --------------------------
     # Deliberately above the instructions: "do not use water" has to be

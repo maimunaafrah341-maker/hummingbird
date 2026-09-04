@@ -23,3 +23,6 @@ outputs/tts_cache/
 # Downloaded eval datasets. ~180MB of images, fetched on demand by
 # eval_accuracy.py --fetch. Never in git.
 datasets/
+
+# Evidence frames from live triggers. Regenerated every run.
+outputs/evidence/

@@ -317,7 +317,41 @@ def fire_incident(violation, zone, source="kiosk", confidence=None,
     return {"event": event, "status": status, "response": body, "ok": ok}
 
 
-def dispatch_downstream(result, speak=True, dossier=True, webhook=True):
+EVIDENCE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "outputs", "evidence")
+
+
+def save_evidence(annotated_frame, zone, violation):
+    """
+    Write the annotated frame that triggered an incident. Returns the
+    path, or None.
+
+    This is what turns the dossier from an assertion into a record.
+    "NO-Hardhat, confidence 0.804" is the model's word for it; the same
+    line with the boxed frame beside it is something a human can check
+    and an inspector can accept. Never raises: losing the photo must not
+    lose the incident.
+    """
+
+    try:
+        import cv2
+
+        os.makedirs(EVIDENCE_DIR, exist_ok=True)
+
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe = "".join(c if c.isalnum() else "-" for c in "%s_%s" % (zone, violation))
+        path = os.path.join(EVIDENCE_DIR, "%s_%s.jpg" % (stamp, safe))
+
+        cv2.imwrite(path, annotated_frame)
+        return path if os.path.exists(path) else None
+
+    except Exception as e:
+        log("  evidence not saved: %s: %s" % (type(e).__name__, e))
+        return None
+
+
+def dispatch_downstream(result, speak=True, dossier=True, webhook=True,
+                        evidence=None):
     """
     Optional follow-through: speak the alert, write the PDF, fire the
     webhook. Each sibling module is imported lazily and its absence is
@@ -343,7 +377,7 @@ def dispatch_downstream(result, speak=True, dossier=True, webhook=True):
     if dossier:
         try:
             import dossier as dossier_module
-            done["pdf"] = dossier_module.build_dossier(event, body)
+            done["pdf"] = dossier_module.build_dossier(event, body, evidence=evidence)
             log("  dossier: %s" % done["pdf"])
         except Exception as e:
             log("  dossier skipped: %s: %s" % (type(e).__name__, e))
@@ -543,8 +577,16 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                 # Keep the most confident instance of each violation.
                 seen[name] = max(seen.get(name, 0.0), confidence)
 
-            for violation in gate.observe(zone, seen.keys()):
+            fires = gate.observe(zone, seen.keys())
+            annotated = results.plot() if (fires or show) else None
+
+            for violation in fires:
                 fired_total += 1
+                evidence = save_evidence(annotated, zone, violation)
+
+                if evidence:
+                    log("  evidence: %s" % os.path.basename(evidence))
+
                 result = fire_incident(
                     violation, zone, source="camera",
                     confidence=seen[violation], substance=substance,
@@ -553,10 +595,11 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                 )
 
                 if downstream:
-                    dispatch_downstream(result)
+                    dispatch_downstream(result, evidence=evidence)
 
             if show:
-                cv2.imshow("HazardWatch %s" % zone, results.plot())
+                cv2.imshow("HazardWatch %s" % zone,
+                           annotated if annotated is not None else frame)
 
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
