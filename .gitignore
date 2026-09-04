@@ -1,0 +1,19 @@
+# Secrets. Never commit.
+.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Model weights. Multi-MB binaries that pip/ultralytics re-downloads on
+# demand -- keeping them out of git history keeps the clone fast.
+*.pt
+
+# Generated incident reports. The directory is tracked (.gitkeep), the
+# PDFs in it are not: they are demo output, regenerated on every run.
+outputs/*.pdf
+outputs/*.mp3
+outputs/*.wav
+outputs/*.json
