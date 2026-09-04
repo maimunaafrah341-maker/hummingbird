@@ -373,10 +373,80 @@ def _violation_classes(model):
     }
 
 
-def run_camera(zone, source_index=0, base=None, key=None, substance=None,
-               language="en", show=False, gate=None, downstream=True):
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff")
+
+
+def frames_from(source, max_frames=None):
     """
-    Watch one camera, feed every frame through the gate, fire what the
+    Yield frames from a webcam index, a video file, or a still image.
+
+    Accepting files is not a convenience, it is demo insurance. A laptop
+    privacy shutter produces a perfectly valid capture of a perfectly
+    flat grey frame -- the camera "works", every read succeeds, and the
+    model correctly detects nothing. Being able to point --source at a
+    recorded clip or a photo means a covered lens costs the demo
+    nothing.
+
+    A still image is yielded repeatedly, because one frame can never
+    satisfy the gate's consecutive-frame requirement.
+    """
+
+    import cv2
+
+    live = isinstance(source, int) or str(source).isdigit()
+
+    if live:
+        source = int(source)
+
+    if not live and str(source).lower().endswith(IMAGE_SUFFIXES):
+        image = cv2.imread(str(source))
+
+        if image is None:
+            raise RuntimeError("could not read image: %s" % source)
+
+        count = 0
+
+        while max_frames is None or count < max_frames:
+            yield image
+            count += 1
+
+        return
+
+    capture = cv2.VideoCapture(source)
+
+    if not capture.isOpened():
+        raise RuntimeError(
+            "could not open source %r.%s" % (
+                source,
+                "\n  Use a recorded clip or photo:  --source clip.mp4"
+                "\n  Or the kiosk path:             python yolo_trigger.py kiosk "
+                "--zone BAY-3 --violation NO-Hardhat" if live else ""))
+
+    count = 0
+
+    try:
+        while max_frames is None or count < max_frames:
+            read_ok, frame = capture.read()
+
+            if not read_ok:
+                if not live:
+                    return  # end of the file, not a glitch
+
+                log("dropped frame")
+                continue
+
+            yield frame
+            count += 1
+
+    finally:
+        capture.release()
+
+
+def run_camera(zone, source_index=0, base=None, key=None, substance=None,
+               language="en", show=False, gate=None, downstream=True,
+               max_frames=None):
+    """
+    Watch one source, feed every frame through the gate, fire what the
     gate lets through. Ctrl-C to stop.
     """
 
@@ -398,25 +468,29 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
         log("         fine-tune, or use the kiosk path for the demo.")
 
     gate = gate or TriggerGate()
-    capture = cv2.VideoCapture(source_index)
 
-    if not capture.isOpened():
-        raise RuntimeError(
-            "camera %s would not open. Use the kiosk path instead:\n"
-            "  python yolo_trigger.py kiosk --zone %s --violation NO-Hardhat"
-            % (source_index, zone))
-
-    log("watching zone=%s on camera %s -- Ctrl-C to stop" % (zone, source_index))
+    log("watching zone=%s on source %r -- Ctrl-C to stop" % (zone, source_index))
     log("gate: %d consecutive frames, %.0fs cooldown, conf>=%.2f"
         % (gate.frames, gate.cooldown, CONFIDENCE_FLOOR))
 
-    try:
-        while True:
-            read_ok, frame = capture.read()
+    blank_frames = 0
+    fired_total = 0
 
-            if not read_ok:
-                log("dropped frame")
-                continue
+    try:
+        for frame in frames_from(source_index, max_frames=max_frames):
+            # A covered privacy shutter reads as a valid, perfectly flat
+            # frame: every read succeeds and the model correctly finds
+            # nothing, which looks exactly like a quiet bay. Say it out
+            # loud instead of watching a lens cap for the whole demo.
+            if float(frame.std()) < 1.0:
+                blank_frames += 1
+
+                if blank_frames == 30:
+                    log("WARNING: 30 featureless frames -- the lens looks covered.")
+                    log("         Nothing can be detected. Check the privacy shutter,")
+                    log("         or run with --source clip.mp4 / --source photo.jpg")
+            else:
+                blank_frames = 0
 
             results = model(frame, verbose=False, conf=CONFIDENCE_FLOOR)[0]
 
@@ -434,6 +508,7 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                 seen[name] = max(seen.get(name, 0.0), confidence)
 
             for violation in gate.observe(zone, seen.keys()):
+                fired_total += 1
                 result = fire_incident(
                     violation, zone, source="camera",
                     confidence=seen[violation], substance=substance,
@@ -454,10 +529,12 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
         log("stopped")
 
     finally:
-        capture.release()
-
+        # The frame generator owns the capture and releases it itself.
         if show:
             cv2.destroyAllWindows()
+
+    log("%d incident(s) fired" % fired_total)
+    return fired_total
 
 
 # ============================================================
@@ -549,10 +626,14 @@ def main(argv=None):
 
     camera = sub.add_parser("camera", help="watch a webcam (the autonomous path)")
     common(camera)
-    camera.add_argument("--source", type=int, default=0, help="cv2 camera index")
+    camera.add_argument("--source", default="0",
+                        help="camera index (0), or a video/image file to run "
+                             "against instead -- useful when the lens is covered")
     camera.add_argument("--show", action="store_true", help="open a preview window")
     camera.add_argument("--cooldown", type=float, default=COOLDOWN_SECONDS)
     camera.add_argument("--frames", type=int, default=CONSECUTIVE_FRAMES)
+    camera.add_argument("--max-frames", type=int, default=None,
+                        help="stop after N frames (a still image is otherwise endless)")
 
     kiosk = sub.add_parser(
         "kiosk", help="one trigger, no camera -- what a physical button calls")
@@ -585,7 +666,7 @@ def main(argv=None):
         args.zone, source_index=args.source, base=args.api, key=args.key,
         substance=args.substance, language=args.language, show=args.show,
         gate=TriggerGate(cooldown=args.cooldown, frames=args.frames),
-        downstream=not args.no_downstream,
+        downstream=not args.no_downstream, max_frames=args.max_frames,
     )
     return 0
 
