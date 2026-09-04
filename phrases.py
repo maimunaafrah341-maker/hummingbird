@@ -246,6 +246,141 @@ STEPS = {
 }
 
 
+HAZARD_STEPS = {
+    "Keep personnel upwind and out of the spread path.": {
+        "hi": "सभी को हवा की विपरीत दिशा में और फैलाव के रास्ते से दूर रखें।",
+        "te": "అందరినీ గాలికి ఎదురు దిక్కులో, వ్యాప్తి మార్గానికి దూరంగా ఉంచండి.",
+        "bn": "সবাইকে বাতাসের উজানে এবং ছড়িয়ে পড়ার পথ থেকে দূরে রাখুন।",
+    },
+    "Do not walk through the spill or track it out of {bay}.": {
+        "hi": "रिसाव में से होकर न चलें और उसे {bay} से बाहर न फैलाएँ।",
+        "te": "చిందిన పదార్థంలో నడవవద్దు, దానిని {bay} బయటకు మోసుకెళ్లవద్దు.",
+        "bn": "ছড়িয়ে পড়া পদার্থের ওপর দিয়ে হাঁটবেন না এবং তা {bay} থেকে বাইরে ছড়াবেন না।",
+    },
+    "Move the affected person to the nearest safety shower.": {
+        "hi": "प्रभावित व्यक्ति को निकटतम सुरक्षा शावर तक ले जाएँ।",
+        "te": "ప్రభావితమైన వ్యక్తిని సమీప భద్రతా షవర్ వద్దకు తీసుకెళ్లండి.",
+        "bn": "আক্রান্ত ব্যক্তিকে নিকটতম নিরাপত্তা শাওয়ারে নিয়ে যান।",
+    },
+    "Flush the affected area with running water for at least fifteen minutes.": {
+        "hi": "प्रभावित हिस्से को कम से कम पंद्रह मिनट तक बहते पानी से धोएँ।",
+        "te": "ప్రభావితమైన ప్రాంతాన్ని కనీసం పదిహేను నిమిషాలు ప్రవహించే నీటితో కడగండి.",
+        "bn": "আক্রান্ত অংশ অন্তত পনেরো মিনিট ধরে বহমান জলে ধুয়ে ফেলুন।",
+    },
+    "Remove contaminated clothing while flushing continues.": {
+        "hi": "पानी से धोते रहते हुए दूषित कपड़े हटा दें।",
+        "te": "నీటితో కడుగుతూనే కలుషితమైన దుస్తులను తొలగించండి.",
+        "bn": "জল দিয়ে ধোয়া চালিয়ে যেতে যেতেই দূষিত পোশাক খুলে ফেলুন।",
+    },
+    "Send the person for medical assessment even if they feel well.": {
+        "hi": "व्यक्ति ठीक महसूस कर रहा हो तब भी उसे चिकित्सा जाँच के लिए भेजें।",
+        "te": "వ్యక్తి బాగానే ఉన్నట్టు అనిపించినా వైద్య పరీక్షకు పంపండి.",
+        "bn": "ব্যক্তি সুস্থ বোধ করলেও তাকে চিকিৎসা পরীক্ষার জন্য পাঠান।",
+    },
+    "Raise the fire alarm and evacuate {bay}.": {
+        "hi": "अग्नि अलार्म बजाएँ और {bay} खाली करें।",
+        "te": "అగ్ని అలారం మోగించి {bay} ఖాళీ చేయండి.",
+        "bn": "অগ্নি সংকেত বাজান এবং {bay} খালি করুন।",
+    },
+    "Do not approach the seat of the fire.": {
+        "hi": "आग के केंद्र के पास न जाएँ।",
+        "te": "మంట కేంద్రం దగ్గరకు వెళ్లవద్దు.",
+        "bn": "আগুনের কেন্দ্রের কাছে যাবেন না।",
+    },
+    "Account for everyone at the assembly point.": {
+        "hi": "सभा स्थल पर सभी की उपस्थिति जाँचें।",
+        "te": "సమావేశ స్థలంలో అందరి హాజరును సరిచూడండి.",
+        "bn": "সমাবেশস্থলে সবার উপস্থিতি মিলিয়ে দেখুন।",
+    },
+    "Withdraw to the exclusion distance and do not approach the vessel.": {
+        "hi": "निर्धारित सुरक्षित दूरी तक पीछे हटें और वेसल के पास न जाएँ।",
+        "te": "నిర్ణీత సురక్షిత దూరానికి వెనక్కి తగ్గండి, పాత్ర దగ్గరకు వెళ్లవద్దు.",
+        "bn": "নির্ধারিত নিরাপদ দূরত্বে সরে যান এবং পাত্রের কাছে যাবেন না।",
+    },
+    "Do not attempt to cool the vessel by hand.": {
+        "hi": "वेसल को हाथ से ठंडा करने की कोशिश न करें।",
+        "te": "పాత్రను చేతితో చల్లార్చే ప్రయత్నం చేయవద్దు.",
+        "bn": "পাত্রটি হাত দিয়ে ঠান্ডা করার চেষ্টা করবেন না।",
+    },
+    "Notify the process engineer and the fire team.": {
+        "hi": "प्रोसेस इंजीनियर और अग्निशमन दल को सूचित करें।",
+        "te": "ప్రాసెస్ ఇంజినీర్‌కు, అగ్నిమాపక బృందానికి తెలియజేయండి.",
+        "bn": "প্রসেস ইঞ্জিনিয়ার এবং অগ্নিনির্বাপক দলকে জানান।",
+    },
+    "Treat the material as hazardous until it is identified.": {
+        "hi": "पहचान होने तक सामग्री को खतरनाक मानकर ही व्यवहार करें।",
+        "te": "గుర్తింపు జరిగే వరకు పదార్థాన్ని ప్రమాదకరంగానే పరిగణించండి.",
+        "bn": "শনাক্ত না হওয়া পর্যন্ত পদার্থটিকে বিপজ্জনক ধরেই আচরণ করুন।",
+    },
+    "Do not attempt to identify it by smell or touch.": {
+        "hi": "इसे सूँघकर या छूकर पहचानने की कोशिश न करें।",
+        "te": "వాసన చూసి లేదా తాకి గుర్తించే ప్రయత్నం చేయవద్దు.",
+        "bn": "গন্ধ শুঁকে বা স্পর্শ করে শনাক্ত করার চেষ্টা করবেন না।",
+    },
+    "Evacuate the affected structure and cordon the area.": {
+        "hi": "प्रभावित ढाँचे को खाली कराएँ और क्षेत्र की घेराबंदी करें।",
+        "te": "ప్రభావితమైన నిర్మాణాన్ని ఖాళీ చేయించి, ప్రాంతాన్ని చుట్టూ అడ్డుకట్ట వేయండి.",
+        "bn": "ক্ষতিগ্রস্ত কাঠামো খালি করুন এবং এলাকা ঘিরে দিন।",
+    },
+    "Check for trapped or injured personnel from a safe distance.": {
+        "hi": "सुरक्षित दूरी से जाँचें कि कोई फँसा या घायल तो नहीं है।",
+        "te": "సురక్షిత దూరం నుంచి ఎవరైనా చిక్కుకున్నారా, గాయపడ్డారా అని చూడండి.",
+        "bn": "নিরাপদ দূরত্ব থেকে দেখুন কেউ আটকে আছে বা আহত হয়েছে কি না।",
+    },
+    "Do not re-enter until a competent person has assessed it.": {
+        "hi": "किसी सक्षम व्यक्ति के आकलन से पहले दोबारा प्रवेश न करें।",
+        "te": "సమర్థుడైన వ్యక్తి అంచనా వేసే వరకు తిరిగి ప్రవేశించవద్దు.",
+        "bn": "যোগ্য ব্যক্তি মূল্যায়ন না করা পর্যন্ত পুনরায় প্রবেশ করবেন না।",
+    },
+}
+
+HAZARD_LABELS = {
+    "chemical spill": {
+        "hi": "रासायनिक रिसाव", "te": "రసాయన చిందు", "bn": "রাসায়নিক ছড়িয়ে পড়া",
+    },
+    "vapour release": {
+        "hi": "वाष्प का रिसाव", "te": "ఆవిరి విడుదల", "bn": "বাষ্প নির্গমন",
+    },
+    "skin or eye contact": {
+        "hi": "त्वचा या आँख का संपर्क", "te": "చర్మం లేదా కంటికి తగలడం",
+        "bn": "ত্বক বা চোখে সংস্পর্শ",
+    },
+    "fire or ignition": {
+        "hi": "आग", "te": "మంట", "bn": "আগুন",
+    },
+    "gas leak": {
+        "hi": "गैस का रिसाव", "te": "గ్యాస్ లీక్", "bn": "গ্যাস লিক",
+    },
+    "thermal runaway": {
+        "hi": "तापीय अनियंत्रण", "te": "ఉష్ణ అదుపుతప్పడం", "bn": "তাপীয় নিয়ন্ত্রণহীনতা",
+    },
+    "unidentified material": {
+        "hi": "अज्ञात पदार्थ", "te": "గుర్తు తెలియని పదార్థం", "bn": "অজ্ঞাত পদার্থ",
+    },
+    "structural failure": {
+        "hi": "ढाँचे की विफलता", "te": "నిర్మాణ వైఫల్యం", "bn": "কাঠামোগত ব্যর্থতা",
+    },
+}
+
+# A hazard is reported; equipment goes missing. Same sentence shape in
+# English, different verbs -- and in these three languages a different
+# construction entirely, which is why the frame is separate rather than
+# a word swap.
+HAZARD_SPOKEN = {
+    "en": "Hazard in %(bay)s. %(item)s reported%(near)s. "
+          "Clear the bay and wait for the safety officer.",
+
+    "hi": "%(bay)s में खतरा।%(near)s %(item)s की सूचना मिली है। "
+          "क्षेत्र खाली करें और सुरक्षा अधिकारी की प्रतीक्षा करें।",
+
+    "te": "%(bay)sలో ప్రమాదం.%(near)s %(item)s నమోదైంది. "
+          "ప్రాంతాన్ని ఖాళీ చేసి భద్రతా అధికారి కోసం వేచి ఉండండి.",
+
+    "bn": "%(bay)s-এ বিপদ।%(near)s %(item)s জানানো হয়েছে। "
+          "এলাকা খালি করুন এবং নিরাপত্তা কর্মকর্তার জন্য অপেক্ষা করুন।",
+}
+
+
 # ============================================================
 # CONTRAINDICATIONS
 # ============================================================
@@ -299,6 +434,13 @@ CONTRAINDICATIONS = {
 # LOOKUP
 # ============================================================
 
+# The hazard tables are separate above for readability and merged here
+# so every lookup, and every completeness check, sees one surface. Two
+# tables meant two places to forget.
+STEPS.update(HAZARD_STEPS)
+ITEMS.update(HAZARD_LABELS)
+
+
 def _lookup(table, english, language):
     entry = table.get(english)
 
@@ -322,7 +464,7 @@ def item(english, language):
     return _lookup(ITEMS, english, language)
 
 
-def spoken(language, bay, item_label, near=None):
+def spoken(language, bay, item_label, near=None, kind="ppe"):
     """
     Build the spoken alert in `language`.
 
@@ -331,7 +473,7 @@ def spoken(language, bay, item_label, near=None):
     Hindi alert, it is two languages in one sentence read by one voice.
     """
 
-    frame = SPOKEN.get(language)
+    frame = (HAZARD_SPOKEN if kind == "hazard" else SPOKEN).get(language)
 
     if not frame:
         return None
@@ -426,7 +568,14 @@ def selftest():
         # offers -- Spill, Gas Leak, Skin Contact -- is unmapped against
         # the PPE table, so this is the branch they ALL take, and it was
         # the one branch the coverage check ignored.
-        generic = incident_api.assess("Spill", "{bay}", None)
+        # Every hazard type the console offers. Missed twice already --
+        # once for VIOLATIONS-only, once for the generic branch -- and
+        # both times the symptom was a whole response silently in
+        # English with nothing failing.
+        for hazard in incident_api.HAZARDS.values():
+            english_steps.update(hazard["steps"])
+
+        generic = incident_api.assess("__nothing_matches_this__", "{bay}", None)
         english_steps.update(generic["_step_templates"])
         english_items = set()
         english_items.add(generic["_item"])
@@ -444,6 +593,7 @@ def selftest():
               "missing: %s" % (missing[0][:40] if missing else "none"))
 
         english_items |= {v["label"] for v in incident_api.VIOLATIONS.values()}
+        english_items |= {h["label"] for h in incident_api.HAZARDS.values()}
         missing = sorted(english_items - set(ITEMS))
         check("every equipment label has an entry", not missing,
               "missing: %s" % (missing[0][:40] if missing else "none"))
@@ -511,9 +661,10 @@ def selftest():
     # -- the spoken frame --------------------------------------------
 
     for lang in ("en",) + LANGUAGES:
-        frame = SPOKEN.get(lang, "")
-        ok = all(k in frame for k in ("%(bay)s", "%(item)s", "%(near)s"))
-        check("spoken frame [%s] has all three slots" % lang, ok, "")
+        for name, table in (("ppe", SPOKEN), ("hazard", HAZARD_SPOKEN)):
+            frame = table.get(lang, "")
+            ok = all(k in frame for k in ("%(bay)s", "%(item)s", "%(near)s"))
+            check("%s frame [%s] has all three slots" % (name, lang), ok, "")
 
     line = spoken("hi", "BAY-3", "head protection")
     check("spoken() builds a Hindi alert",

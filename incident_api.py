@@ -260,6 +260,164 @@ def _raise_severity(current, floor):
         return current
 
 
+# ============================================================
+# HAZARD TYPES
+# ============================================================
+#
+# What the console actually asks about.
+#
+# VIOLATIONS above is keyed on missing PPE, because the camera trigger
+# detects missing PPE. The operator console asks a different question --
+# a spill, a gas leak, someone splashed -- and none of its eight types
+# matched a PPE key, so every console incident fell through to the
+# unmapped branch and came back with "Stop work and hold the area. Have
+# a competent person assess the hazard." Correct, generic, and plainly
+# not about a chlorine spill.
+#
+# Two taxonomies, one service, because the two front doors genuinely ask
+# different things. A camera cannot see a spill and an operator does not
+# report a missing hardhat.
+#
+# `label` is what the spoken alert names. `severity` is the floor before
+# any substance raises it.
+
+HAZARDS = {
+    "spill": {
+        "label": "chemical spill",
+        "severity": "high",
+        "steps": [
+            "Stop handling operations in {bay}.",
+            "Keep personnel upwind and out of the spread path.",
+            "Do not walk through the spill or track it out of {bay}.",
+        ],
+    },
+    "vapor release": {
+        "label": "vapour release",
+        "severity": "high",
+        "steps": [
+            "Clear {bay} to fresh air and hold the area.",
+            "Check the local exhaust ventilation is running.",
+            "Issue the correct respirator for the substance before re-entry.",
+        ],
+    },
+    "skin contact": {
+        "label": "skin or eye contact",
+        "severity": "critical",
+        "steps": [
+            "Move the affected person to the nearest safety shower.",
+            "Flush the affected area with running water for at least "
+            "fifteen minutes.",
+            "Remove contaminated clothing while flushing continues.",
+            "Send the person for medical assessment even if they feel well.",
+        ],
+    },
+    "fire flare": {
+        "label": "fire or ignition",
+        "severity": "critical",
+        "steps": [
+            "Raise the fire alarm and evacuate {bay}.",
+            "Do not approach the seat of the fire.",
+            "Account for everyone at the assembly point.",
+        ],
+    },
+    "gas leak": {
+        "label": "gas leak",
+        "severity": "critical",
+        "steps": [
+            "Isolate the supply valve before anything else.",
+            "Evacuate upwind and ventilate before anyone re-enters.",
+            "Remove ignition sources and ventilate at floor level.",
+        ],
+    },
+    "thermal runaway": {
+        "label": "thermal runaway",
+        "severity": "critical",
+        "steps": [
+            "Withdraw to the exclusion distance and do not approach the "
+            "vessel.",
+            "Do not attempt to cool the vessel by hand.",
+            "Notify the process engineer and the fire team.",
+        ],
+    },
+    "unknown chemical": {
+        "label": "unidentified material",
+        "severity": "high",
+        "steps": [
+            "Stop work in {bay} and hold the area.",
+            "Treat the material as hazardous until it is identified.",
+            "Do not attempt to identify it by smell or touch.",
+        ],
+    },
+    "structural failure": {
+        "label": "structural failure",
+        "severity": "high",
+        "steps": [
+            "Evacuate the affected structure and cordon the area.",
+            "Check for trapped or injured personnel from a safe distance.",
+            "Do not re-enter until a competent person has assessed it.",
+        ],
+    },
+}
+
+# Words an operator or another console might send for the same thing.
+HAZARD_ALIASES = {
+    "leak": "spill",
+    "liquid release": "spill",
+    "chemical spill": "spill",
+    "vapour release": "vapor release",
+    "vapor": "vapor release",
+    "vapour": "vapour release",
+    "airborne exposure": "vapor release",
+    "splash": "skin contact",
+    "personnel exposure": "skin contact",
+    "exposure": "skin contact",
+    "fire": "fire flare",
+    "ignition": "fire flare",
+    "thermal event": "fire flare",
+    "gas release": "gas leak",
+    "toxic gas": "gas leak",
+    "overpressure": "thermal runaway",
+    "runaway": "thermal runaway",
+    "unknown": "unknown chemical",
+    "unidentified material": "unknown chemical",
+    "equipment failure": "structural failure",
+    "collapse": "structural failure",
+}
+
+
+def _match_hazard(incident_type):
+    """
+    Match the console's incident type. Returns (key, rules) or (None, None).
+
+    Exact key first, then aliases, then a containment check -- so
+    "Chemical Spill in Bay 3" still resolves to spill rather than
+    falling through to the generic branch, which is the whole failure
+    this table exists to fix.
+    """
+
+    if not incident_type:
+        return None, None
+
+    text = incident_type.strip().lower()
+
+    if text in HAZARDS:
+        return text, HAZARDS[text]
+
+    if text in HAZARD_ALIASES:
+        key = HAZARD_ALIASES[text]
+        return key, HAZARDS[key]
+
+    for key in HAZARDS:
+        if key in text:
+            return key, HAZARDS[key]
+
+    for alias, key in HAZARD_ALIASES.items():
+        if alias in text:
+            return key, HAZARDS[key]
+
+    return None, None
+
+
 def assess(incident_type, bay, substance_code, substance_name=None):
     """
     The rules tier. Deterministic, offline, always answers.
@@ -272,10 +430,19 @@ def assess(incident_type, bay, substance_code, substance_name=None):
     violation_key, violation = _match_violation(incident_type)
     matched_name, substance_rules = _match_substance(substance_code, substance_name)
 
+    hazard_key, hazard = _match_hazard(incident_type)
+
     if violation:
         severity = violation["severity"]
         templates = list(violation["steps"])
         missing = violation["label"]
+        kind = "ppe"
+    elif hazard:
+        # The console asked about a hazard, not missing equipment.
+        severity = hazard["severity"]
+        templates = list(hazard["steps"])
+        missing = hazard["label"]
+        kind = "hazard"
     else:
         # An unrecognised hazard is still an incident. Answer generically
         # rather than 500-ing, and say the type was not recognised.
@@ -284,6 +451,7 @@ def assess(incident_type, bay, substance_code, substance_name=None):
                      "Have a competent person assess the hazard before "
                      "work resumes."]
         missing = "required protective equipment"
+        kind = "ppe"
 
     contraindication = None
 
@@ -298,8 +466,12 @@ def assess(incident_type, bay, substance_code, substance_name=None):
     # look them up by the key the phrase table actually uses.
     steps = [t.format(bay=bay) for t in templates]
 
-    spoken = ("Hazard in %s. %s missing%s. Clear the bay and wait for the "
-              "safety officer." % (
+    spoken_frame = ("Hazard in %s. %s missing%s. Clear the bay and wait for "
+                    "the safety officer.") if kind == "ppe" else (
+                    "Hazard in %s. %s reported%s. Clear the bay and wait for "
+                    "the safety officer.")
+
+    spoken = (spoken_frame % (
                   bay.replace("-", " ").replace("_", " "),
                   missing.capitalize(),
                   " near %s" % matched_name if matched_name else ""))
@@ -316,6 +488,7 @@ def assess(incident_type, bay, substance_code, substance_name=None):
         "_bay": bay.replace("-", " ").replace("_", " "),
         "_bay_raw": bay,
         "_item": missing,
+        "_kind": kind,
         "_near": matched_name,
     }
 
@@ -620,7 +793,8 @@ def _spoken_from_table(response, language):
     if not bay or not item:
         return None
 
-    return phrases.spoken(language, bay, item, near=response.get("_near"))
+    return phrases.spoken(language, bay, item, near=response.get("_near"),
+                          kind=response.get("_kind", "ppe"))
 
 
 def localize_response(response, language):
