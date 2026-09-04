@@ -558,10 +558,11 @@ def assess(
 
     Returns a dict with severity, steps, contraindication,
     spoken_alert, spoken_alert_translated, grounded, retrieval_mode,
-    retrieved_sources and substance_name. Raises RuntimeError when no
-    provider is configured, ValueError when the model would not
-    produce a usable answer, and whatever requests raises on a
-    transport failure -- api.py maps those onto status codes.
+    retrieved_sources, substance_name and generation_provider. Raises
+    RuntimeError when no provider is configured at all, ValueError when
+    the model would not produce a usable answer, and whatever requests
+    raises on a transport failure -- api.py maps those onto status
+    codes.
 
     substance_name is echoed back untouched. The outputs team builds
     the compliance PDF from this response, and making them look the
@@ -578,7 +579,9 @@ def assess(
         bay_id, substance_code, substance_name, incident_type, chunks
     )
 
-    assessment = _validate(generate_structured_response(prompt))
+    payload, provider = generate_structured_response(prompt)
+
+    assessment = _validate(payload)
 
     spoken_alert, translated = _localize(assessment["spoken_alert"], target_lang)
 
@@ -597,6 +600,12 @@ def assess(
         "grounded": bool(chunks),
         "retrieval_mode": retrieval_mode,
         "retrieved_sources": sources,
+        # Which provider actually answered. Featherless is always
+        # attempted first, so a response saying "groq" means the
+        # primary was tried and failed -- worth surfacing per response
+        # rather than only in a log, because a deployment can fall back
+        # on every single request and otherwise look perfectly healthy.
+        "generation_provider": provider,
     }
 
 

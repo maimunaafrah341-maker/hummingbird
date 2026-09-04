@@ -269,35 +269,36 @@ def generate_response(prompt):
 
 
 # ============================================================
-# STRUCTURED JSON GENERATION (Featherless)
+# STRUCTURED JSON GENERATION (Featherless, then Groq)
 # ============================================================
 #
 # Everything below is additive. Nothing above this line is touched by
 # it, which is the point: /translate is documented against
 # generate_response()'s exact three-tier behaviour, and a second caller
 # with different needs must not be able to change what the first one
-# does.
+# does. This path reuses generate_response()'s GROQ_API_KEY and its
+# _call_openai_compatible_api() helper, and changes neither.
 #
-# Unlike generate_response(), this path has no failover. That is a
-# deliberate decision rather than an oversight: a single provider
-# answering in a known JSON dialect is easier to hold to a strict
-# output contract than four providers with four house styles, and a
-# structured response that arrives in the wrong shape is not more
-# useful than one that does not arrive. The tradeoff is real and it
-# belongs in the API contract, not hidden here -- a Featherless outage
-# takes the structured endpoint down, while /translate keeps running on
-# its three tiers.
+# Featherless is always attempted first and is never skipped when it is
+# configured -- that ordering is a requirement, not a performance
+# judgement. Groq exists behind it because Featherless's current plan
+# excludes automated API use, so an attempt that fails on
+# authorisation is expected rather than exceptional, and a dispatcher
+# that stops dispatching because of a billing tier is not acceptable.
+#
+# This is deliberately narrower than generate_response()'s chain: two
+# providers, not four. A structured response has to arrive in an agreed
+# shape, and every additional provider is another house style to hold
+# to it.
 
 FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY")
 FEATHERLESS_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 FEATHERLESS_BASE_URL = "https://api.featherless.ai/v1"
 
-# Longer than the 30s default used above. A 72B model on a shared
-# serverless tier is slower to first token than the small chat models
-# the prose path uses, and a timeout that fires while the model is
-# still writing produces the same user-visible outcome as an outage
-# while wasting the generation that was nearly finished.
-FEATHERLESS_TIMEOUT = 60
+# The Groq fallback. Same key and same helper generate_response() uses
+# -- GROQ_MODEL and GROQ_API_KEY are defined once, above, and read from
+# here rather than redeclared, so there is no second copy to drift.
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 # How much of a bad response to quote back to the model when asking it
 # again. Enough that it can see what it did wrong, capped so that a
@@ -305,21 +306,64 @@ FEATHERLESS_TIMEOUT = 60
 # retry prompt larger than its own context budget.
 CORRECTION_ECHO_CHARS = 2000
 
-# Hard ceiling on the whole function -- both attempts together, not
-# each. FEATHERLESS_TIMEOUT above does NOT bound this: requests'
-# timeout limits how long a connection may go silent, not how long a
-# request may take, so a provider that keeps trickling bytes never
-# trips it. Measured 2026-09-04 on the 60s setting: one request ran 221
-# seconds and failed, and an identical one succeeded at 242 seconds,
-# while the median was under 25. A dispatcher that might take four
-# minutes to answer is not a dispatcher.
-FEATHERLESS_DEADLINE = 90
+# Per-provider time budgets, each covering that provider's first
+# attempt AND its correction retry. They are separate because the two
+# providers are not remotely alike in speed, and because a slow
+# Featherless attempt must not eat the time Groq needs to rescue it.
+#
+# 60s for Featherless: measured 2026-09-04, its median was under 25s
+# and its slowest SUCCESSFUL call was 42s. Past 60s we would only be
+# buying the pathological tail -- two observed runs of 221s and 242s --
+# which is exactly what the watchdog exists to cut off.
+#
+# 30s for Groq: openai/gpt-oss-120b answers /translate prompts in about
+# 1.0s measured. 30s is deliberately generous for a larger structured
+# prompt plus a retry.
+#
+# 60 + 30 = 90, which is the same worst case this function had when it
+# only called Featherless. The fallback costs no additional latency
+# ceiling; it re-divides the budget that was already there.
+FEATHERLESS_DEADLINE = 60
+GROQ_DEADLINE = 30
 
 # Do not start a correction retry that cannot finish inside what is
-# left of the budget. Beginning a call whose result nobody will wait
-# for spends the provider's token quota to produce nothing -- and on
-# this account, spending quota is what makes the NEXT request fail.
+# left of that provider's budget. Beginning a call whose result nobody
+# will wait for spends the provider's token quota to produce nothing --
+# and on the Featherless account, spending quota is what makes the NEXT
+# request fail. When Featherless runs out of budget mid-retry the right
+# move is to fall through to Groq, which is an order of magnitude
+# faster than the retry would have been anyway.
 MIN_RETRY_SECONDS = 15
+
+# Which provider answered the most recent successful structured call:
+# None until one has, then "featherless" or "groq". Exposed so /health
+# can show it, for the same reason language.py exposes its tier state.
+#
+# It exists because "Featherless is configured" and "Featherless is
+# actually answering" are different claims, and only the second one is
+# the point. A deployment whose Featherless key is silently rejected on
+# every request would otherwise look completely healthy while never
+# once using the provider it is required to use.
+_last_provider = None
+
+
+def last_generation_provider():
+    """
+    The provider that answered the last successful structured call, or
+    None if none has succeeded yet in this process.
+    """
+
+    return _last_provider
+
+
+def featherless_configured():
+    """
+    Whether a Featherless key is present. Says nothing about whether it
+    works -- only a real call can establish that, which is what
+    last_generation_provider() reports.
+    """
+
+    return bool(FEATHERLESS_API_KEY)
 
 
 class StructuredGenerationTimeout(requests.exceptions.Timeout):
@@ -447,52 +491,36 @@ def _extract_json(text):
     return parsed
 
 
-def generate_structured_response(prompt):
+def _attempt_provider(base_url, api_key, model, prompt, budget, label):
     """
-    Send a prompt to Featherless and return the parsed JSON object it
-    replied with.
+    One provider's full attempt at a JSON answer: a call, and one
+    correction retry if it comes back unparseable and the budget allows.
 
-    One retry, and only for the one failure mode a retry can fix. If
-    the response does not parse, the model is asked again with its own
-    invalid output quoted back to it and a blunter instruction --
-    which works often enough to be worth a second call, because the
-    usual cause is a model adding conversational framing rather than a
-    model that cannot produce the shape at all.
+    Returns the parsed dict. Raises on anything else -- which is the
+    point, because the caller distinguishes providers by catching that.
 
-    A transport failure is NOT retried here. A timeout or a 5xx means
-    the provider is unwell, and immediately asking it again is how a
-    slow outage becomes a slower one; that decision belongs to the
-    caller, which knows whether anyone is still waiting.
+    `budget` covers this provider's attempt AND its retry, so a slow
+    first call shortens the retry rather than doubling the ceiling.
+    Monotonic clock, because an adjustment mid-request must not extend
+    or collapse it.
 
-    Guarantees a dict. Says nothing about which keys are in it --
-    this module does not know what was asked for, and the caller that
-    wrote the prompt is the only thing that can validate the answer
-    against it.
-
-    Raises RuntimeError if no key is configured, ValueError if the
-    model failed to produce JSON twice, and whatever requests raises
-    on a transport failure.
+    The read timeout is derived from the budget rather than fixed: a
+    socket timeout longer than the watchdog it sits inside can never
+    fire, and one much shorter would abandon a generation that was
+    nearly finished.
     """
 
-    if not FEATHERLESS_API_KEY:
-        raise RuntimeError(
-            "FEATHERLESS_API_KEY is not set -- structured generation is "
-            "unavailable."
-        )
-
-    # One budget for both attempts, so a slow first call shortens the
-    # retry rather than doubling the worst case. Monotonic because a
-    # clock adjustment mid-request must not extend or collapse it.
-    deadline = time.monotonic() + FEATHERLESS_DEADLINE
+    deadline = time.monotonic() + budget
+    read_timeout = max(5, int(budget))
 
     raw = _call_with_deadline(
         _remaining(deadline),
         _call_openai_compatible_api,
-        FEATHERLESS_BASE_URL,
-        FEATHERLESS_API_KEY,
-        FEATHERLESS_MODEL,
+        base_url,
+        api_key,
+        model,
         prompt,
-        timeout=FEATHERLESS_TIMEOUT,
+        timeout=read_timeout,
     )
 
     try:
@@ -500,8 +528,8 @@ def generate_structured_response(prompt):
 
     except ValueError as e:
         print(
-            "[Featherless] %s failed to return JSON (%s) -- retrying once "
-            "with a correction prompt" % (FEATHERLESS_MODEL, e),
+            "[%s] %s failed to return JSON (%s) -- retrying once with a "
+            "correction prompt" % (label, model, e),
             flush=True,
         )
 
@@ -509,9 +537,9 @@ def generate_structured_response(prompt):
 
     if remaining < MIN_RETRY_SECONDS:
         raise ValueError(
-            "%s did not return valid JSON, and only %.0fs of the %ds budget "
+            "%s did not return valid JSON, and only %.0fs of its %ds budget "
             "remained -- too little to retry"
-            % (FEATHERLESS_MODEL, remaining, FEATHERLESS_DEADLINE)
+            % (model, remaining, budget)
         )
 
     corrected = (
@@ -530,11 +558,11 @@ def generate_structured_response(prompt):
     retried = _call_with_deadline(
         remaining,
         _call_openai_compatible_api,
-        FEATHERLESS_BASE_URL,
-        FEATHERLESS_API_KEY,
-        FEATHERLESS_MODEL,
+        base_url,
+        api_key,
+        model,
         corrected,
-        timeout=FEATHERLESS_TIMEOUT,
+        timeout=read_timeout,
     )
 
     try:
@@ -542,13 +570,104 @@ def generate_structured_response(prompt):
 
     except ValueError as e:
         print("\n" + "=" * 70)
-        print("STRUCTURED GENERATION ERROR (Featherless returned invalid "
-              "JSON twice)")
+        print("STRUCTURED GENERATION ERROR (%s returned invalid JSON twice)"
+              % label)
         print("=" * 70)
         print(retried[:CORRECTION_ECHO_CHARS])
         print("=" * 70)
 
         raise ValueError(
             "%s did not return valid JSON after a correction retry (%s)"
-            % (FEATHERLESS_MODEL, e)
+            % (model, e)
         )
+
+
+def generate_structured_response(prompt):
+    """
+    Get a JSON object out of a model. Returns (payload, provider).
+
+    Featherless first, always, whenever it is configured -- that
+    ordering is required, not chosen on merit. Groq picks up if
+    Featherless fails for ANY reason: rejected key, rate limit,
+    watchdog timeout, or two unparseable answers in a row. Both
+    providers get identical treatment, including the one correction
+    retry.
+
+    The provider name is returned alongside the payload rather than
+    inserted into it. The payload is the model's own JSON, and writing
+    our own key into it risks colliding with one the model actually
+    produced -- and would make the caller unable to tell the difference.
+
+    Guarantees a dict. Says nothing about which keys are in it: this
+    module does not know what was asked for, and the caller that wrote
+    the prompt is the only thing that can validate the answer against
+    it.
+
+    Raises RuntimeError when no provider is configured at all, and
+    otherwise re-raises the LAST provider's failure -- the earlier one
+    is printed rather than raised, because the caller needs one error
+    to act on and the most recent is the one that decided the outcome.
+    """
+
+    global _last_provider
+
+    attempts = []
+
+    if FEATHERLESS_API_KEY:
+        attempts.append((
+            "featherless", FEATHERLESS_BASE_URL, FEATHERLESS_API_KEY,
+            FEATHERLESS_MODEL, FEATHERLESS_DEADLINE,
+        ))
+
+    else:
+        # Not fatal any more, but not quiet either. Featherless being
+        # unconfigured means every response silently comes from the
+        # fallback, which is a deployment that looks healthy while
+        # never using the provider it is supposed to use.
+        print(
+            "[Featherless] FEATHERLESS_API_KEY is not set -- skipping the "
+            "primary provider entirely and going straight to Groq",
+            flush=True,
+        )
+
+    if GROQ_API_KEY:
+        attempts.append((
+            "groq", GROQ_BASE_URL, GROQ_API_KEY,
+            GROQ_MODEL, GROQ_DEADLINE,
+        ))
+
+    if not attempts:
+        raise RuntimeError(
+            "No structured-generation provider is configured -- set "
+            "FEATHERLESS_API_KEY or GROQ_API_KEY."
+        )
+
+    last_error = None
+
+    for index, (label, base_url, api_key, model, budget) in enumerate(attempts):
+
+        try:
+            payload = _attempt_provider(
+                base_url, api_key, model, prompt, budget, label,
+            )
+
+            _last_provider = label
+
+            return payload, label
+
+        except Exception as e:
+
+            last_error = e
+
+            remaining = len(attempts) - index - 1
+
+            print(
+                "[%s] %s failed: %s: %s%s"
+                % (
+                    label, model, type(e).__name__, e,
+                    " -- falling back" if remaining else " -- no providers left",
+                ),
+                flush=True,
+            )
+
+    raise last_error

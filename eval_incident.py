@@ -547,6 +547,12 @@ def eval_live(base, delay):
         )
 
         check(
+            "%s names its generation provider" % code,
+            body.get("generation_provider") in ("featherless", "groq"),
+            "generation_provider=%r" % body.get("generation_provider"),
+        )
+
+        check(
             "%s alert is speakable" % code,
             isinstance(body.get("spoken_alert"), str)
             and 0 < len(body["spoken_alert"].split()) <= 35

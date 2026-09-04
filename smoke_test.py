@@ -256,7 +256,8 @@ def main():
             required = [
                 "severity", "steps", "contraindication", "spoken_alert",
                 "spoken_alert_translated", "substance_name", "grounded",
-                "retrieval_mode", "retrieved_sources", "latency_ms",
+                "retrieval_mode", "retrieved_sources", "generation_provider",
+                "latency_ms",
             ]
 
             missing = [field for field in required if field not in body]
@@ -306,6 +307,22 @@ def main():
                 "%r" % body.get("substance_name"),
             )
 
+            # Not asserted to be "featherless": a deployment where the
+            # primary is unfunded still answers correctly via the
+            # fallback, and this test checks honesty, not billing. What
+            # it must be is one of the two known providers, and it must
+            # agree with what /health reports.
+            check(
+                "incident names its generation provider",
+                body.get("generation_provider") in ("featherless", "groq"),
+                "generation_provider=%r%s"
+                % (
+                    body.get("generation_provider"),
+                    "  <- PRIMARY NOT IN USE"
+                    if body.get("generation_provider") == "groq" else "",
+                ),
+            )
+
         else:
             check(
                 "incident degrades honestly",
@@ -321,6 +338,19 @@ def main():
             "health reports retrieval truthfully",
             "retrieval" in health_final and health_final["retrieval"] is not None,
             "retrieval: %s" % health_final.get("retrieval"),
+        )
+
+        generation = health_final.get("generation", {})
+
+        check(
+            "health agrees with the response about the provider",
+            generation.get("last_provider") == body.get("generation_provider"),
+            "health=%r response=%r configured=%s"
+            % (
+                generation.get("last_provider"),
+                body.get("generation_provider"),
+                generation.get("featherless_configured"),
+            ),
         )
 
     # -- summary -----------------------------------------------------

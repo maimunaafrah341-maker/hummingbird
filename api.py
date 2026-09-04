@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 import incident
 import language
+import llm
 import translation
 
 
@@ -240,6 +241,7 @@ class IncidentResponse(BaseModel):
     grounded: bool
     retrieval_mode: str
     retrieved_sources: list[str]
+    generation_provider: str
     latency_ms: float
 
 
@@ -282,6 +284,16 @@ def health():
     check by loading a model would make the check the most expensive
     request the service serves, and on a cold process it would block
     the very probe that is meant to establish the process is alive.
+
+    `generation` answers two different questions that are easy to
+    confuse. `featherless_configured` says a key is present -- known
+    instantly, and nothing more than that. `last_provider` says which
+    provider actually answered last, which is the question that
+    matters: Featherless is attempted first on every request, so a
+    deployment whose key is present but rejected would report
+    configured=true and last_provider="groq" forever, working
+    perfectly while never once using its primary provider. Null until
+    something has generated, for the same reason the tiers are.
     """
 
     return {
@@ -291,6 +303,10 @@ def health():
             "semantic": language.semantic_tier_available(),
         },
         "retrieval": incident.retrieval_available(),
+        "generation": {
+            "featherless_configured": llm.featherless_configured(),
+            "last_provider": llm.last_generation_provider(),
+        },
         "languages": sorted(language.SUPPORTED_LANGUAGES),
     }
 
