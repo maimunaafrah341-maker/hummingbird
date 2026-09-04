@@ -538,6 +538,217 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
 
 
 # ============================================================
+# DOCTOR -- the pre-demo check
+# ============================================================
+
+def doctor(zone="BAY-3", source="0", api=None, language="en", frames=20):
+    """
+    Check everything the live path needs, before it is needed.
+
+    Ordered so the cheap checks fail first, and every failure names the
+    fix rather than just the symptom. FAIL means the demo will not work;
+    WARN means it will work but in a degraded way you should know about.
+
+    Returns the number of failures, so this can gate a run.
+    """
+
+    results = []
+
+    def record(status, name, detail, fix=None):
+        results.append(status)
+        print("  %-4s  %-26s %s" % (status, name, detail))
+
+        if fix and status != "PASS":
+            print("        -> %s" % fix)
+
+    print("HazardWatch pre-flight\n")
+
+    # -- outputs directory -------------------------------------------
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        probe = os.path.join(out_dir, ".doctor")
+
+        with open(probe, "w") as handle:
+            handle.write("ok")
+
+        os.remove(probe)
+        record("PASS", "outputs/ writable", out_dir)
+
+    except Exception as e:
+        record("FAIL", "outputs/ writable", "%s: %s" % (type(e).__name__, e),
+               "the dossier has nowhere to write")
+
+    # -- camera ------------------------------------------------------
+    capture = None
+    live_frame = None
+
+    try:
+        import cv2
+        import numpy
+
+        index = int(source) if str(source).isdigit() else source
+        capture = cv2.VideoCapture(index)
+
+        if not capture.isOpened():
+            record("FAIL", "camera opens", "source %r would not open" % source,
+                   "check the index, or use --source clip.mp4, or run the kiosk path")
+        else:
+            for _ in range(10):       # let exposure settle
+                capture.read()
+
+            read_ok, live_frame = capture.read()
+
+            if not read_ok or live_frame is None:
+                record("FAIL", "camera reads", "opened but returned no frame",
+                       "another app may be holding the camera")
+            else:
+                height, width = live_frame.shape[:2]
+                spread = float(numpy.std(live_frame))
+
+                record("PASS", "camera reads", "%dx%d" % (width, height))
+
+                # The failure that looks like success: a closed privacy
+                # shutter reads as a perfectly valid, perfectly flat frame.
+                if spread < 1.0:
+                    record("FAIL", "lens is uncovered",
+                           "frame is featureless (std %.1f)" % spread,
+                           "open the privacy shutter -- nothing can be detected")
+                elif spread < 10.0:
+                    record("WARN", "lens is uncovered",
+                           "very low contrast (std %.1f)" % spread,
+                           "check lighting; detection will be unreliable")
+                else:
+                    record("PASS", "lens is uncovered", "std %.1f" % spread)
+
+                started = time.perf_counter()
+
+                for _ in range(frames):
+                    capture.read()
+
+                capture_fps = frames / (time.perf_counter() - started)
+                record("PASS", "capture rate", "%.1f fps" % capture_fps)
+
+    except Exception as e:
+        record("FAIL", "camera", "%s: %s" % (type(e).__name__, e),
+               "opencv is missing or the camera is unavailable")
+
+    finally:
+        if capture is not None:
+            capture.release()
+
+    # -- model -------------------------------------------------------
+    model = None
+
+    try:
+        model, label = load_model()
+        record("PASS", "model loads", label)
+
+        violations = _violation_classes(model)
+
+        if violations:
+            record("PASS", "violation classes",
+                   "%d of %d: %s" % (len(violations), len(model.names),
+                                     ", ".join(sorted(violations.values()))))
+        else:
+            record("FAIL", "violation classes",
+                   "none -- this model cannot detect a violation",
+                   "point HAZARDWATCH_MODEL at a PPE fine-tune")
+
+    except Exception as e:
+        record("FAIL", "model loads", "%s: %s" % (type(e).__name__, str(e)[:90]),
+               "pip install -r requirements-trigger.txt")
+
+    # -- live inference ----------------------------------------------
+    if model is not None and live_frame is not None:
+        try:
+            model(live_frame, verbose=False, conf=CONFIDENCE_FLOOR)  # warm-up
+
+            started = time.perf_counter()
+
+            for _ in range(5):
+                results_obj = model(live_frame, verbose=False, conf=CONFIDENCE_FLOOR)[0]
+
+            infer_fps = 5 / (time.perf_counter() - started)
+
+            seen = {}
+
+            for box in results_obj.boxes:
+                name = model.names[int(box.cls[0])]
+                seen[name] = max(seen.get(name, 0.0), round(float(box.conf[0]), 2))
+
+            record("PASS", "inference on a live frame", "%.1f fps" % infer_fps)
+            record("PASS" if seen else "WARN", "what the camera sees",
+                   ", ".join("%s %.2f" % (k, v) for k, v in sorted(seen.items()))
+                   or "nothing above conf %.2f" % CONFIDENCE_FLOOR,
+                   None if seen else
+                   "stand in frame; the gate needs %d consecutive frames to fire"
+                   % CONSECUTIVE_FRAMES)
+
+            confirm_seconds = CONSECUTIVE_FRAMES / infer_fps
+            record("PASS", "time to fire", "%.1f s (%d frames at %.1f fps)"
+                   % (confirm_seconds, CONSECUTIVE_FRAMES, infer_fps))
+
+        except Exception as e:
+            record("FAIL", "inference", "%s: %s" % (type(e).__name__, str(e)[:90]))
+
+    # -- incident service --------------------------------------------
+    # Reachability only. A probe POST would open a real incident, which
+    # is not something a pre-flight check should do.
+    base = (api or INCIDENT_API).rstrip("/")
+
+    try:
+        request = urllib.request.Request(base, method="GET")
+
+        with urllib.request.urlopen(request, timeout=5) as response:
+            record("PASS", "incident service", "%s -> %s" % (base, response.status))
+
+    except urllib.error.HTTPError as e:
+        # Any HTTP answer means something is listening, which is the question.
+        record("PASS", "incident service", "%s -> %s (reachable)" % (base, e.code))
+
+    except Exception as e:
+        record("WARN", "incident service", "%s unreachable (%s)" % (base, type(e).__name__),
+               "start it, or pass --api; the rehearsal uses its own mock")
+
+    # -- speech ------------------------------------------------------
+    try:
+        import tts_alert
+
+        voice = tts_alert._offline_voice_for(language)
+
+        if voice:
+            record("PASS", "speech (%s)" % language, "offline voice: %s" % voice.name)
+        else:
+            cache = tts_alert.CACHE_DIR
+            warm = len(os.listdir(cache)) if os.path.isdir(cache) else 0
+
+            record("WARN", "speech (%s)" % language,
+                   "no local voice; needs gTTS (network). %d cached clip(s)" % warm,
+                   "python tts_alert.py --prefetch alerts.txt --lang %s" % language)
+
+    except Exception as e:
+        record("FAIL", "speech", "%s: %s" % (type(e).__name__, str(e)[:90]),
+               "pip install -r requirements-trigger.txt")
+
+    failures = results.count("FAIL")
+    warnings = results.count("WARN")
+
+    print("\n  %d passed, %d warning(s), %d failure(s)"
+          % (results.count("PASS"), warnings, failures))
+
+    if failures:
+        print("\n  NOT ready -- fix the failures above.")
+    elif warnings:
+        print("\n  Ready, with caveats. The warnings are things to know, not blockers.")
+    else:
+        print("\n  Ready.")
+
+    return failures
+
+
+# ============================================================
 # SELF TEST -- the gate, which is the part that can actually be wrong
 # ============================================================
 
@@ -643,10 +854,23 @@ def main(argv=None):
 
     sub.add_parser("selftest", help="gate logic only: no camera, no network")
 
+    check = sub.add_parser(
+        "doctor", help="pre-flight: camera, lens, model, endpoint, speech")
+    check.add_argument("--zone", default="BAY-3")
+    check.add_argument("--source", default="0", help="camera index or file")
+    check.add_argument("--api", default=None, help="incident service base URL")
+    check.add_argument("--language", default="en")
+    check.add_argument("--frames", type=int, default=20,
+                       help="frames to time the capture rate over")
+
     args = parser.parse_args(argv)
 
     if args.mode == "selftest":
         return selftest()
+
+    if args.mode == "doctor":
+        return 1 if doctor(args.zone, args.source, args.api,
+                           args.language, args.frames) else 0
 
     if args.mode == "kiosk":
         # Deliberately the same call the camera loop makes. The only
