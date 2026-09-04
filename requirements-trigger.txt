@@ -1,0 +1,39 @@
+# Dependencies for the HazardWatch trigger half: yolo_trigger.py,
+# tts_alert.py, dossier.py, webhook_dispatch.py.
+#
+# Kept separate from requirements.txt the same way requirements-semantic
+# is: this pulls in torch, so installing it takes minutes and ~2GB, and
+# the API service has no reason to carry that.
+#
+#     pip install -r requirements-trigger.txt
+#
+# Versions are the ones this was built and tested against on
+# 2026-09-04, Python 3.11.
+
+# -- detection ------------------------------------------------------
+# ultralytics brings torch and torchvision with it.
+ultralytics>=8.4.0
+opencv-python>=4.12.0
+
+# Only needed to pull a PPE fine-tune from the Hub. Without it the
+# "hf:..." model candidate is skipped and yolo_trigger falls back to a
+# local best.pt or stock yolov8n.pt -- see MODEL_CANDIDATES.
+huggingface_hub>=1.0.0
+
+# -- spoken alerts --------------------------------------------------
+# pyttsx3 drives the OS speech engine offline. On Windows it needs
+# pywin32/comtypes, which pip resolves for you.
+pyttsx3>=2.99
+
+# gTTS covers hi/bn/te/ur, which a stock Windows box has no voices for.
+# playsound3 plays the resulting mp3 without a browser.
+gTTS>=2.5.0
+playsound3>=3.3.0
+
+# -- reports --------------------------------------------------------
+reportlab>=4.2.0
+
+# Note: nothing here is needed for `python smoke_test.py <url>`, and
+# only reportlab + the TTS packages are needed for
+# `python smoke_test.py incident`. The rehearsal never imports
+# ultralytics -- that is why it runs without a camera.
