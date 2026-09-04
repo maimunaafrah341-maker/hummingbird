@@ -386,6 +386,34 @@ class IncidentRequest(BaseModel):
 app = (FastAPI(title="HazardWatch incident service (reference implementation)")
        if WEB_AVAILABLE else None)
 
+# Browser clients on another origin -- a Vercel/Netlify frontend calling
+# a Render backend -- are blocked by the browser unless this service
+# says otherwise. No frontend change can work around it; the header has
+# to come from here.
+#
+# CORS_ORIGINS is a comma-separated list. Unset allows any origin, which
+# is right for a hackathon demo where the frontend URL is not known
+# until it deploys, and wrong for anything real -- so set it once the
+# frontend has a stable URL.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "*").split(",")
+    if origin.strip()
+]
+
+if WEB_AVAILABLE:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        # The frontend posts Content-Type: application/json, which makes
+        # the browser send an OPTIONS preflight first. Without OPTIONS
+        # here the preflight fails and the POST never happens.
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-API-Key"],
+    )
+
 
 def _check_key(provided):
     if API_KEY and provided != API_KEY:
