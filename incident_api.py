@@ -41,8 +41,10 @@ have. If the substance is unknown, the field is omitted -- no
 contraindication is safer than a guessed one.
 """
 
+import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -272,14 +274,15 @@ def assess(incident_type, bay, substance_code, substance_name=None):
 
     if violation:
         severity = violation["severity"]
-        steps = [s.format(bay=bay) for s in violation["steps"]]
+        templates = list(violation["steps"])
         missing = violation["label"]
     else:
         # An unrecognised hazard is still an incident. Answer generically
         # rather than 500-ing, and say the type was not recognised.
         severity = "medium"
-        steps = ["Stop work in %s and hold the area." % bay,
-                 "Have a competent person assess the hazard before work resumes."]
+        templates = ["Stop work in {bay} and hold the area.",
+                     "Have a competent person assess the hazard before "
+                     "work resumes."]
         missing = "required protective equipment"
 
     contraindication = None
@@ -287,9 +290,13 @@ def assess(incident_type, bay, substance_code, substance_name=None):
     if substance_rules:
         severity = _raise_severity(severity, substance_rules["severity_floor"])
         contraindication = substance_rules["contraindication"]
-        steps.insert(1, substance_rules["first_step"])
+        templates.insert(1, substance_rules["first_step"])
 
-    steps.append("Log the incident and notify the shift safety officer.")
+    templates.append("Log the incident and notify the shift safety officer.")
+
+    # Formatted for the caller; the templates stay so the translator can
+    # look them up by the key the phrase table actually uses.
+    steps = [t.format(bay=bay) for t in templates]
 
     spoken = ("Hazard in %s. %s missing%s. Clear the bay and wait for the "
               "safety officer." % (
@@ -301,6 +308,15 @@ def assess(incident_type, bay, substance_code, substance_name=None):
         "severity": severity,
         "steps": steps,
         "spoken_alert": spoken,
+        # Underscored, and stripped before the response leaves the
+        # service: these are the parts the localizer needs to rebuild a
+        # sentence in another language rather than trying to translate
+        # an already-assembled one.
+        "_step_templates": templates,
+        "_bay": bay.replace("-", " ").replace("_", " "),
+        "_bay_raw": bay,
+        "_item": missing,
+        "_near": matched_name,
     }
 
     # Omitted, never guessed. An invented contraindication is the one
@@ -377,6 +393,22 @@ class IncidentRequest(BaseModel):
     source: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
     timestamp: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
     language: Optional[str] = Field(default="en", max_length=16)
+
+
+class CopilotRequest(BaseModel):
+    """
+    One operator question, plus exactly the context they ticked.
+
+    shared_context is a free-shaped object on purpose: the console
+    decides which fields an operator may share, and pinning the
+    schema here would mean a UI change could not add a field without
+    a backend deploy. It is echoed back verbatim, so whatever is
+    listed in the console's drawer is what was actually sent.
+    """
+
+    question: str = Field(max_length=2000)
+    shared_context: Optional[dict] = None
+    approved_docs: Optional[list] = None
     confidence: Optional[float] = None
     camera_id: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
 
@@ -495,6 +527,12 @@ def incident(request, x_api_key=None):
 
     response["localization"] = localize_response(response, request.language)
 
+    # The localizer is done with them, and they are not part of the
+    # contract. Leaving them in would ship internal structure to every
+    # client and invite somebody to depend on it.
+    for private in [k for k in response if k.startswith("_")]:
+        response.pop(private)
+
     # Tell the twin. Wrapped because telemetry must never be able to
     # turn a successful assessment into a 500 -- the caller is a trigger
     # waiting to speak an alert.
@@ -516,6 +554,29 @@ def incident(request, x_api_key=None):
             pass
 
     return response
+
+
+def _spoken_from_table(response, language):
+    """
+    Rebuild the spoken alert from the phrase table rather than
+    translating the finished English sentence.
+
+    Translating the assembled string would mean parsing back out the
+    bay and the equipment that were just formatted into it. The parts
+    are still available here, so the sentence is built once per
+    language from its own frame -- which is also the only way the
+    clause order comes out natural rather than English-shaped.
+    """
+
+    import phrases
+
+    bay = response.get("_bay")
+    item = response.get("_item")
+
+    if not bay or not item:
+        return None
+
+    return phrases.spoken(language, bay, item, near=response.get("_near"))
 
 
 def localize_response(response, language):
@@ -548,9 +609,59 @@ def localize_response(response, language):
         block["reason"] = "English requested -- nothing to translate"
         return block
 
+    # Tier 1: the shipped phrase table. Deterministic, offline, instant,
+    # and reviewable by a human who speaks the language -- which is the
+    # whole argument for it. Everything this service can say comes from
+    # a fixed set of 23 strings, so runtime machine translation was
+    # never the right tool: it needs a key, costs a round trip, is
+    # automated LLM traffic, and can mistranslate "do not add water to
+    # the acid" with nobody checking.
+    try:
+        import phrases
+
+        if phrases.covers(requested):
+            bay_raw = response.get("_bay_raw", "")
+            templates = response.get("_step_templates") or []
+            translated_steps = [phrases.step(t, requested) for t in templates]
+            steps = [t.format(bay=bay_raw) if t else None
+                     for t in translated_steps]
+            contra = response.get("contraindication")
+            contra_translated = (phrases.contraindication(contra, requested)
+                                 if contra else None)
+
+            # All or nothing. A Hindi step list with one English line in
+            # it is not a translation, it is a bug that looks like one.
+            if all(steps) and (contra is None or contra_translated):
+                block.update({
+                    "language": requested,
+                    "translated": True,
+                    "source": "phrase table",
+                    "steps": steps,
+                    "review": phrases.review_state(requested),
+                })
+
+                if contra_translated:
+                    block["contraindication"] = contra_translated
+
+                spoken = _spoken_from_table(response, requested)
+
+                if spoken:
+                    block["spoken_alert"] = spoken
+
+                return block
+
+            block["reason"] = ("phrase table is missing an entry for this "
+                               "response -- falling back to English")
+
+    except Exception as e:
+        block["reason"] = "phrase table failed (%s)" % type(e).__name__
+
+    # Tier 2: a model. Only if somebody asked for it.
     if not TRANSLATE:
-        block["reason"] = ("translation is not enabled on this deployment "
-                           "(set INCIDENT_TRANSLATE=1 and a provider key)")
+        block.setdefault("reason", None)
+        block["reason"] = block["reason"] or (
+            "no phrase table for %r, and model translation is off "
+            "(set INCIDENT_TRANSLATE=1 and a provider key)" % requested)
         return block
 
     try:
@@ -586,6 +697,138 @@ def localize_response(response, language):
         block["reason"] = "%s: %s" % (type(e).__name__, str(e)[:120])
 
     return block
+
+
+# ============================================================
+# THE EHS COPILOT
+# ============================================================
+#
+# The sponsor requirement, satisfied the way the licence and the safety
+# argument both point: Featherless as a tool an operator opens, asks a
+# question, and reads -- not a service the system calls on its own.
+#
+# Nothing here can act. The endpoint returns text. It has no path to the
+# webhook dispatcher, the TTS layer, the escalation watcher or the
+# incident record; the operator copies what they want into the incident
+# themselves. That is not a limitation to work around later, it is the
+# whole design: a model that can draft a briefing is useful, and a model
+# that can broadcast one is a hazard.
+
+COPILOT_SYSTEM = """You are the Featherless EHS Copilot for an industrial safety console,
+operating in HUMAN-DECISION mode.
+
+You provide analysis, clarification, checklists, translation and draft
+notes for a trained operator who is handling a live incident.
+
+You NEVER issue autonomous orders, activate equipment, broadcast alerts,
+override a procedure, or state that any action has been carried out. You
+do not instruct; you help a human think and communicate.
+
+Use ONLY the operator-shared context and approved documents supplied
+below. If a fact is not in them, say plainly that it is missing rather
+than supplying it from general knowledge -- an invented detail about a
+chemical is worse than an acknowledged gap.
+
+Structure every answer under these headings, omitting any that would be
+empty:
+
+  What is known
+  What must be verified
+  Questions for the operator
+  Approved-document references
+
+Be concise. Prefer short lines a person can read while standing up.
+
+End every answer with exactly this line:
+Human decision required: verify against site SOP/SDS and EHS direction.
+"""
+
+COPILOT_CLOSING = ("Human decision required: verify against site SOP/SDS "
+                   "and EHS direction.")
+
+# What the console offers as one-tap questions. Kept server-side so the
+# advisory framing cannot drift between the two halves of the project --
+# and because every one of them asks the model to help the operator
+# investigate rather than to decide anything.
+COPILOT_PROMPTS = [
+    "What must I verify in the next 60 seconds?",
+    "What information is missing?",
+    "Explain the chemical hazard simply",
+    "What questions should I ask the field team?",
+    "Draft a handover for the EHS lead",
+    "Translate my operator note to Telugu",
+    "Summarise this camera observation",
+    "Compare this event against the approved SOP",
+]
+
+
+def copilot(question, shared_context=None, approved_docs=None):
+    """
+    Answer one operator question. Advisory only.
+
+    Returns the answer plus an exact echo of what was sent. The console
+    shows a "shared with AI" drawer, and a drawer that lists anything
+    other than what actually left the building is worse than no drawer:
+    it is a privacy claim that is not true. So the echo is built from
+    the same object that goes into the prompt, not assembled separately.
+    """
+
+    question = (question or "").strip()
+
+    if not question:
+        raise ValueError("question must not be empty")
+
+    if len(question) > 2000:
+        raise ValueError("question is too long (limit 2000 characters)")
+
+    # Only what the operator ticked. Empty values are dropped rather
+    # than sent as nulls, so the drawer and the payload agree.
+    shared = {
+        key: value
+        for key, value in (shared_context or {}).items()
+        if value not in (None, "", [], {})
+    }
+
+    docs = list(approved_docs or [])
+
+    payload = {
+        "operator_question": question,
+        "operator_shared_context": shared,
+        "approved_site_documents": docs,
+    }
+
+    import llm
+
+    answer, provider = llm.generate_response(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        system=COPILOT_SYSTEM,
+        temperature=0.2,
+        max_tokens=650,
+        want_provider=True,
+    )
+
+    answer = answer.strip()
+
+    # The closing line is a promise the console displays. A model that
+    # drops it under length pressure would leave the console asserting
+    # something the text does not say, so it is enforced here rather
+    # than hoped for.
+    if COPILOT_CLOSING.lower() not in answer.lower():
+        answer = answer + "\n\n" + COPILOT_CLOSING
+
+    return {
+        "answer": answer,
+        "mode": "human_decision_required",
+        "advisory": True,
+        "provider": provider,
+        # Exactly what left this process, for the drawer.
+        "shared": payload,
+        "prompts": COPILOT_PROMPTS,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "note": "Advisory only. This response cannot dispatch, broadcast, "
+                "translate an alert, or control equipment. An authorised "
+                "operator decides what, if anything, happens next.",
+    }
 
 
 def shift_brief(request):
@@ -664,6 +907,34 @@ if WEB_AVAILABLE:
                        x_api_key: str = Header(default=None)):
         return incident(request, x_api_key)
 
+    @app.get("/incident/copilot/prompts")
+    def copilot_prompts_route():
+        """The suggested questions, so the console cannot drift from them."""
+
+        return {"prompts": COPILOT_PROMPTS, "advisory": True}
+
+    @app.post("/incident/copilot")
+    def copilot_route(request: CopilotRequest,
+                      x_api_key: str = Header(default=None)):
+        _check_key(x_api_key)
+
+        try:
+            return copilot(request.question, request.shared_context,
+                           request.approved_docs)
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        except Exception as e:
+            # 503, like the brief: the copilot being unreachable is an
+            # inconvenience to an operator, never a failure of the
+            # incident response, which was produced without it.
+            raise HTTPException(
+                status_code=503,
+                detail="copilot unavailable (%s: %s). The incident response "
+                       "is unaffected -- it is generated deterministically, "
+                       "without a model." % (type(e).__name__, str(e)[:160]))
+
     @app.post("/incident/brief")
     def brief_route(request: IncidentRequest,
                     x_api_key: str = Header(default=None)):
@@ -691,6 +962,13 @@ if WEB_AVAILABLE:
 
 def selftest():
     """Exercise the rules directly. No server, no network."""
+
+    # Prints Devanagari now, and a Windows console is cp1252 by default.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
     checks = []
 
@@ -755,23 +1033,90 @@ def selftest():
           as_english["reason"])
 
     hindi = localize_response(english, "hi")
-    check("a non-English request is answered, not ignored",
-          hindi["requested"] == "hi" and hindi["reason"],
-          hindi["reason"][:46])
+    check("Hindi is translated from the shipped phrase table",
+          hindi["translated"] and hindi["language"] == "hi"
+          and hindi.get("source") == "phrase table",
+          "no key, no network, no model")
+
+    check("every step comes back in Devanagari",
+          len(hindi["steps"]) == len(english["steps"])
+          and all(not step.isascii() for step in hindi["steps"]),
+          "%d steps, none left in English" % len(hindi["steps"]))
+
+    check("the bay id survives translation",
+          all("BAY-3" in step for step in hindi["steps"]
+              if "{bay}" in "".join(english["steps"]) or "BAY-3" in step),
+          "placeholder formatted after translation, not before")
+
+    check("the spoken alert is rebuilt, not string-translated",
+          not hindi["spoken_alert"].isascii()
+          and "BAY 3" in hindi["spoken_alert"],
+          "built from its own frame")
+
+    check("translation does not claim a review that never happened",
+          hindi["review"]["reviewed"] is False and hindi["review"]["note"],
+          "says it needs a native speaker")
+
+    caustic = assess("NO-Hardhat", "BAY-3", "NAOH")
+    hi_caustic = localize_response(caustic, "hi")
+    check("the contraindication is translated too",
+          hi_caustic["translated"]
+          and not hi_caustic["contraindication"].isascii(),
+          "the string where an error is not an inconvenience")
+
+    french = localize_response(english, "fr")
+    check("an uncovered language falls back and says why",
+          not french["translated"] and french["language"] == "en"
+          and french["reason"],
+          french["reason"][:44])
 
     check("untranslated text is never labelled as translated",
-          hindi["language"] == "en" and not hindi["translated"],
+          french["language"] == "en",
           "language says what the text IS, not what was asked")
-
-    check("localization always carries renderable text",
-          hindi["spoken_alert"] == english["spoken_alert"]
-          and len(hindi["steps"]) == len(english["steps"]),
-          "falls back to English rather than to nothing")
 
     check("a broken translator cannot cost you the incident",
           localize_response({"spoken_alert": "x", "steps": []},
                             "te")["spoken_alert"] == "x",
           "degrades, never raises")
+
+    # -- the copilot: advisory, and structurally unable to act -------
+
+    refused = False
+    try:
+        copilot("   ")
+    except ValueError:
+        refused = True
+    check("an empty question is refused", refused, "400, not a wasted call")
+
+    refused = False
+    try:
+        copilot("x" * 2001)
+    except ValueError:
+        refused = True
+    check("an oversized question is refused", refused, "2000 char limit")
+
+    check("the system prompt forbids acting",
+          all(p in COPILOT_SYSTEM for p in
+              ("NEVER issue autonomous orders", "activate equipment",
+               "broadcast alerts", "carried out")),
+          "orders, equipment, broadcast, completion claims")
+
+    check("the system prompt forbids inventing chemistry",
+          "than supplying it from general knowledge" in COPILOT_SYSTEM,
+          "an acknowledged gap beats an invented detail")
+
+    check("every suggested prompt investigates rather than delegates",
+          COPILOT_PROMPTS and not any(
+              p.strip().lower() in ("what should i do?", "what do i do?",
+                                    "fix this", "resolve this")
+              for p in COPILOT_PROMPTS),
+          "%d prompts, none of them 'what should I do?'" % len(COPILOT_PROMPTS))
+
+    check("the copilot cannot reach anything that acts",
+          not any(name in copilot.__code__.co_names
+                  for name in ("dispatch_downstream", "post_incident",
+                               "webhook_dispatch", "tts_alert", "speak")),
+          "no path to dispatch, speech or escalation")
 
     check("rules tier needs nothing", plain["tier"] == "rules", plain["tier"])
 
