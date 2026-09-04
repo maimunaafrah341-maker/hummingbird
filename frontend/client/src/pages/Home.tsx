@@ -243,6 +243,43 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
     return () => window.clearInterval(timer);
   }, []);
 
+  // Which voices this machine actually has.
+  //
+  // utterance.lang is a *hint*, not an instruction. Set it to "hi-IN"
+  // on a box with no Hindi voice and the browser does not fail -- it
+  // speaks the Devanagari with the default English voice, which is
+  // unintelligible in both languages. Chrome also populates getVoices()
+  // asynchronously, so the first read is often empty and the
+  // voiceschanged event is the only reliable signal.
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const load = () => setVoices(window.speechSynthesis.getVoices() ?? []);
+    load();
+    window.speechSynthesis.addEventListener("voiceschanged", load);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", load);
+  }, []);
+
+  const wantedLang = broadcast.lang.split("-")[0].toLowerCase();
+
+  // Prefix match: a machine may have "hi-IN" or plain "hi", and Telugu
+  // voices ship as "te-IN". Exact-matching the full tag misses both.
+  const voice = useMemo(
+    () => voices.find((v) => v.lang.toLowerCase().split("-")[0] === wantedLang) ?? null,
+    [voices, wantedLang],
+  );
+
+  // Can we actually say it in the language on screen?
+  const canSpeakRequested = wantedLang === "en" || Boolean(voice);
+
+  // What English sounds like at this point in the loop, for when we
+  // cannot. Same index, so the spoken line matches the written one.
+  const englishSequence = useMemo(() => {
+    const en = evacuationBroadcasts.English;
+    return en.instructions.flatMap((instruction) => [en.lead, instruction]);
+  }, []);
+
   useEffect(() => {
     if (elapsedSeconds >= 300 && !evacuationConfirmed) setAutoStopped(true);
   }, [elapsedSeconds, evacuationConfirmed]);
@@ -254,8 +291,20 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
     }
     const speakAlert = () => {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(currentMessage);
-      utterance.lang = broadcast.lang;
+      // Speak what we can actually pronounce. With no voice for the
+      // requested language, saying the English line in an English
+      // voice is the honest failure -- the operator hears a real
+      // instruction instead of Devanagari mangled into English
+      // phonetics, and the banner below says the audio is English
+      // while the screen is not.
+      const spokenText = canSpeakRequested
+        ? currentMessage
+        : englishSequence[messageIndex % englishSequence.length];
+
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+
+      if (voice) utterance.voice = voice;
+      utterance.lang = voice ? voice.lang : (canSpeakRequested ? broadcast.lang : "en-IN");
       utterance.rate = 0.86;
       utterance.pitch = 0.92;
       utterance.volume = 1;
@@ -276,7 +325,7 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
       if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
       speechTimerRef.current = null;
     };
-  }, [broadcast.lang, broadcast.lead, broadcast.instructions, currentMessage, sequence.length, autoStopped, evacuationConfirmed]);
+  }, [broadcast.lang, broadcast.lead, broadcast.instructions, currentMessage, sequence.length, autoStopped, evacuationConfirmed, voice, canSpeakRequested, englishSequence, messageIndex]);
 
   function confirmEvacuation() {
     setEvacuationConfirmed(true);
@@ -374,6 +423,11 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
 
       <footer className="lockout-footer">
         <span><span className={`live-indicator ${evacuationConfirmed || autoStopped ? "live-indicator-muted" : ""}`} /> {evacuationConfirmed ? "Broadcast acknowledged" : autoStopped ? "Broadcast stopped at five minutes" : `Broadcast active · ${context.language} channel`}</span>
+        {!canSpeakRequested && !evacuationConfirmed && !autoStopped && (
+          <span className="voice-missing" role="status">
+            No {context.language} voice on this device — <strong>audio is English</strong>, on-screen text is {context.language}. Install a {context.language} voice in the OS speech settings for spoken {context.language}.
+          </span>
+        )}
         <button className="reset-button" onClick={onReset}><RotateCcw size={15} /> Reset console</button>
       </footer>
     </main>
