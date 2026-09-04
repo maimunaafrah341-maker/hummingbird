@@ -173,7 +173,9 @@ def resolve_citation(event, response):
 
         return (str(supplied), "", "incident service")
 
-    hazard = "%s %s" % (event.get("hazard_type") or "", event.get("substance") or "")
+    hazard = "%s %s %s" % (event.get("incident_type") or "",
+                           event.get("substance_name") or "",
+                           event.get("substance_code") or "")
     hazard = hazard.lower()
 
     for keyword in sorted(CITATIONS, key=len, reverse=True):
@@ -183,6 +185,21 @@ def resolve_citation(event, response):
 
     code, title = FALLBACK_CITATION
     return code, title, "local reference table (no keyword matched)"
+
+
+def _substance_line(event):
+    """Display name, with the canonical code beside it when we have one."""
+
+    name = event.get("substance_name")
+    code = event.get("substance_code")
+
+    if not name and not code:
+        return "not recorded"
+
+    if name and code:
+        return "%s  (%s)" % (name, code)
+
+    return name or code
 
 
 def incident_id(event):
@@ -350,9 +367,9 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
     confidence = event.get("confidence")
 
     facts = [
-        ("Bay / zone", value("bay", "zone")),
-        ("Hazard", value("hazard_type", "violation")),
-        ("Substance", value("substance")),
+        ("Bay / zone", value("bay_id")),
+        ("Hazard", value("incident_type")),
+        ("Substance", _substance_line(event)),
         ("Detected at", value("timestamp")),
         ("Triggered by", "%s%s" % (
             value("source"),
@@ -507,9 +524,10 @@ def open_pdf(path):
 # ============================================================
 
 SAMPLE_EVENT = {
-    "zone": "BAY-3", "bay": "BAY-3",
-    "hazard_type": "NO-Hardhat", "violation": "NO-Hardhat",
-    "substance": "Sodium hydroxide (50% solution)",
+    "bay_id": "BAY-3",
+    "incident_type": "NO-Hardhat",
+    "substance_name": "Sodium hydroxide (50% solution)",
+    "substance_code": "NAOH",
     "source": "camera", "confidence": 0.91, "camera_id": "0",
     "timestamp": "2026-09-04T11:42:07+00:00", "language": "en",
 }
@@ -563,13 +581,13 @@ def selftest():
     check("service citation wins", code == "29 CFR 1910.1200" and source == "incident service",
           source)
 
-    code, _, source = resolve_citation({"hazard_type": "SOMETHING-NEW"}, {})
+    code, _, source = resolve_citation({"incident_type": "SOMETHING-NEW"}, {})
     check("unknown hazard falls back", code == "29 CFR 1910.132",
           "%s (%s)" % (code, source))
 
     # The empty case matters: a service that returns nothing useful must
     # still produce a filable page, not a traceback.
-    bare = build_dossier({"zone": "BAY-1"}, {}, filename="selftest_bare.pdf")
+    bare = build_dossier({"bay_id": "BAY-1"}, {}, filename="selftest_bare.pdf")
     check("survives an empty response", os.path.getsize(bare) > 1200,
           os.path.basename(bare))
 

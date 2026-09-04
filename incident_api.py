@@ -90,6 +90,7 @@ MAX_FIELD_CHARS = 200
 # well-established property of the substance, not a generated sentence.
 SUBSTANCES = {
     "sodium hydroxide": {
+        "code": "NAOH",
         "aliases": ("naoh", "caustic soda", "lye"),
         "class": "corrosive base",
         "contraindication": "Do not flush with a pressurised water jet -- "
@@ -99,6 +100,7 @@ SUBSTANCES = {
         "severity_floor": "high",
     },
     "sulfuric acid": {
+        "code": "H2SO4",
         "aliases": ("h2so4", "battery acid"),
         "class": "corrosive acid",
         "contraindication": "Do not add water to the acid -- the reaction is "
@@ -108,6 +110,7 @@ SUBSTANCES = {
         "severity_floor": "high",
     },
     "chlorine": {
+        "code": "CL2",
         "aliases": ("cl2", "bleach", "hypochlorite"),
         "class": "toxic gas / oxidiser",
         "contraindication": "Do not mix with ammonia or acids -- releases "
@@ -117,6 +120,7 @@ SUBSTANCES = {
         "severity_floor": "critical",
     },
     "ammonia": {
+        "code": "NH3",
         "aliases": ("nh3", "anhydrous ammonia"),
         "class": "toxic gas / base",
         "contraindication": "Do not mix with chlorine or bleach. Do not use "
@@ -126,6 +130,7 @@ SUBSTANCES = {
         "severity_floor": "critical",
     },
     "acetone": {
+        "code": "ACETONE",
         "aliases": ("propanone",),
         "class": "flammable solvent",
         "contraindication": "Do not use a water jet on an acetone fire -- it "
@@ -135,6 +140,7 @@ SUBSTANCES = {
         "severity_floor": "high",
     },
     "lpg": {
+        "code": "LPG",
         "aliases": ("propane", "butane", "liquefied petroleum"),
         "class": "flammable gas",
         "contraindication": "Do not extinguish a burning gas leak until the "
@@ -215,17 +221,29 @@ def _match_violation(incident_type):
     return None, None
 
 
-def _match_substance(substance):
-    """Map a substance name or code to a rules entry, or (None, None)."""
+def _match_substance(substance_code, substance_name=None):
+    """
+    Map a canonical code (preferred) or a display name to a rules entry.
 
-    text = (substance or "").lower()
+    The code is checked first and exactly, because that is the contract
+    field and an exact key beats substring matching. The name is a
+    fallback for callers that have not adopted substance_code yet, or
+    for a substance the trigger could not map.
+    """
 
-    if not text.strip():
-        return None, None
+    code = (substance_code or "").strip().upper()
 
-    for name, rules in SUBSTANCES.items():
-        if name in text or any(alias in text for alias in rules["aliases"]):
-            return name, rules
+    if code:
+        for name, rules in SUBSTANCES.items():
+            if rules.get("code") == code:
+                return name, rules
+
+    text = (substance_name or "").lower()
+
+    if text.strip():
+        for name, rules in SUBSTANCES.items():
+            if name in text or any(alias in text for alias in rules["aliases"]):
+                return name, rules
 
     return None, None
 
@@ -240,7 +258,7 @@ def _raise_severity(current, floor):
         return current
 
 
-def assess(incident_type, bay, substance):
+def assess(incident_type, bay, substance_code, substance_name=None):
     """
     The rules tier. Deterministic, offline, always answers.
 
@@ -250,7 +268,7 @@ def assess(incident_type, bay, substance):
 
     bay = bay or "the bay"
     violation_key, violation = _match_violation(incident_type)
-    substance_name, substance_rules = _match_substance(substance)
+    matched_name, substance_rules = _match_substance(substance_code, substance_name)
 
     if violation:
         severity = violation["severity"]
@@ -277,7 +295,7 @@ def assess(incident_type, bay, substance):
               "safety officer." % (
                   bay.replace("-", " ").replace("_", " "),
                   missing.capitalize(),
-                  " near %s" % substance_name if substance_name else ""))
+                  " near %s" % matched_name if matched_name else ""))
 
     response = {
         "severity": severity,
@@ -348,15 +366,13 @@ class IncidentRequest(BaseModel):
     """
 
     bay_id: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
-    bay: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
-    zone: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
-
     incident_type: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
-    hazard_type: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
-    violation: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
 
-    substance_code: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
-    substance: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
+    # Code is the retrieval key; name is what a human reads. A substance
+    # the trigger could not map sends a name and NO code -- that means
+    # "unmapped", never "no substance present".
+    substance_code: Optional[str] = Field(default=None, max_length=32)
+    substance_name: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
 
     source: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
     timestamp: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
@@ -364,14 +380,7 @@ class IncidentRequest(BaseModel):
     confidence: Optional[float] = None
     camera_id: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
 
-    def resolved_bay(self):
-        return self.bay_id or self.bay or self.zone
 
-    def resolved_type(self):
-        return self.incident_type or self.hazard_type or self.violation
-
-    def resolved_substance(self):
-        return self.substance_code or self.substance
 
 
 app = (FastAPI(title="HazardWatch incident service (reference implementation)")
@@ -395,26 +404,26 @@ def health():
 def incident(request, x_api_key=None):
     _check_key(x_api_key)
 
-    incident_type = request.resolved_type()
+    incident_type = request.incident_type
 
     if not incident_type or not incident_type.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="incident_type (or hazard_type/violation) must not be empty")
+        raise HTTPException(status_code=400,
+                            detail="incident_type must not be empty")
 
-    bay = request.resolved_bay()
+    bay = request.bay_id
 
     if not bay or not bay.strip():
-        raise HTTPException(
-            status_code=400, detail="bay_id (or bay/zone) must not be empty")
+        raise HTTPException(status_code=400, detail="bay_id must not be empty")
 
     started = datetime.now(timezone.utc)
-    response = assess(incident_type, bay, request.resolved_substance())
+    response = assess(incident_type, bay,
+                      request.substance_code, request.substance_name)
 
     if USE_LLM:
         try:
             response = assess_with_llm(
-                incident_type, bay, request.resolved_substance(), response)
+                incident_type, bay,
+                request.substance_name or request.substance_code, response)
         except Exception as e:
             # Degrade to the rules tier and say which tier answered. A
             # safety service that returns nothing because a key expired
@@ -469,7 +478,7 @@ def selftest():
           "contraindication" not in plain,
           "omitted rather than guessed")
 
-    caustic = assess("NO-Hardhat", "BAY-3", "Sodium hydroxide (50% solution)")
+    caustic = assess("NO-Hardhat", "BAY-3", "NAOH", "Sodium hydroxide (50% solution)")
     check("substance adds a contraindication",
           "water" in caustic.get("contraindication", "").lower(),
           caustic.get("contraindication", "")[:52])
@@ -477,15 +486,15 @@ def selftest():
     check("substance raises severity",
           caustic["severity"] == "high", caustic["severity"])
 
-    chlorine = assess("NO-Mask", "BAY-7", "chlorine")
+    chlorine = assess("NO-Mask", "BAY-7", "CL2")
     check("critical substance escalates",
           chlorine["severity"] == "critical", chlorine["severity"])
 
     check("alias matching works",
-          assess("NO-Mask", "BAY-7", "CL2")["severity"] == "critical",
-          "cl2 -> chlorine")
+          assess("NO-Mask", "BAY-7", None, "cl2 tank")["severity"] == "critical",
+          "name fallback still works")
 
-    unknown = assess("SOMETHING-NEW", "BAY-1", "unobtainium")
+    unknown = assess("SOMETHING-NEW", "BAY-1", None, "unobtainium")
     check("unknown hazard still answers",
           unknown["severity"] and unknown["steps"] and "contraindication" not in unknown,
           "%s, %d steps, no invented contraindication"

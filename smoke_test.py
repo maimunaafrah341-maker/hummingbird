@@ -117,8 +117,9 @@ def check(name, condition, detail=""):
 def mock_incident_response(event):
     """Answer a hazard event the way the incident service is expected to."""
 
-    bay = event.get("bay") or event.get("zone") or "the bay"
-    substance = event.get("substance") or "an unidentified substance"
+    bay = event.get("bay_id") or "the bay"
+    substance = (event.get("substance_name") or event.get("substance_code")
+                 or "an unidentified substance")
 
     return {
         "severity": "high",
@@ -249,11 +250,12 @@ def run_incident_rehearsal(argv):
                            if _IncidentHandler.requests else "none"))
 
         sent = _IncidentHandler.requests[0][1] if _IncidentHandler.requests else {}
-        check("event carries bay + hazard + source",
-              sent.get("bay") == zone and sent.get("hazard_type") == "NO-Hardhat"
+        check("event carries bay_id + incident_type + source",
+              sent.get("bay_id") == zone
+              and sent.get("incident_type") == "NO-Hardhat"
               and sent.get("source") == "camera",
-              "bay=%s hazard=%s source=%s"
-              % (sent.get("bay"), sent.get("hazard_type"), sent.get("source")))
+              "bay_id=%s incident_type=%s source=%s"
+              % (sent.get("bay_id"), sent.get("incident_type"), sent.get("source")))
 
         check("response has the contract fields",
               all(k in body for k in
@@ -268,7 +270,7 @@ def run_incident_rehearsal(argv):
         kiosk_sent = _IncidentHandler.requests[-1][1]
         check("kiosk takes the same path",
               kiosk["ok"] and kiosk_sent.get("source") == "kiosk"
-              and kiosk_sent.get("hazard_type") == sent.get("hazard_type"),
+              and kiosk_sent.get("incident_type") == sent.get("incident_type"),
               "same endpoint, only source differs")
 
     finally:

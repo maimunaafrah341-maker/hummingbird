@@ -145,10 +145,10 @@ def build_alert_payload(event, response, channels=DEFAULT_CHANNELS):
     event = dict(event or {})
     response = dict(response or {})
 
-    bay = event.get("bay") or event.get("zone") or "unknown bay"
-    hazard = event.get("hazard_type") or event.get("violation") or "hazard"
+    bay = event.get("bay_id") or "unknown bay"
+    hazard = event.get("incident_type") or "hazard"
     severity = str(response.get("severity") or "unrecorded").upper()
-    substance = event.get("substance")
+    substance = event.get("substance_name") or event.get("substance_code")
     contraindication = response.get("contraindication")
 
     steps = response.get("steps") or []
@@ -375,8 +375,9 @@ def _background_stub(quiet=True):
 # ============================================================
 
 SAMPLE_EVENT = {
-    "zone": "BAY-3", "bay": "BAY-3", "hazard_type": "NO-Hardhat",
-    "substance": "Sodium hydroxide (50% solution)", "source": "camera",
+    "bay_id": "BAY-3", "incident_type": "NO-Hardhat",
+    "substance_name": "Sodium hydroxide (50% solution)",
+    "substance_code": "NAOH", "source": "camera",
     "confidence": 0.91, "timestamp": "2026-09-04T11:42:07+00:00", "language": "en",
 }
 

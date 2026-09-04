@@ -116,6 +116,72 @@ MODEL_CANDIDATES = [
 # on the first model with a different class order.
 VIOLATION_PREFIXES = ("no-", "no_", "no ")
 
+# Free-text substance -> canonical code for the incident service's
+# `substance_code` field.
+#
+# This mapping lives on the trigger side by agreement: the operator
+# types a substance (via --substance or a bay config) and the service
+# wants a stable key it can retrieve against. Doing it here means the
+# service never has to parse "Sodium hydroxide (50% solution)".
+#
+# Note the substance is NOT model-derived -- unlike incident_type, which
+# comes from the detector's class names, this is operator input. So the
+# table is matched on substrings, longest first, and an unrecognised
+# substance yields NO code rather than a guessed one: the name still
+# travels in `substance_name`, and the service should treat a missing
+# `substance_code` as "unmapped", never as "no substance".
+SUBSTANCE_CODES = {
+    "sodium hydroxide": "NAOH",
+    "caustic soda": "NAOH",
+    "lye": "NAOH",
+    "naoh": "NAOH",
+    "sulfuric acid": "H2SO4",
+    "sulphuric acid": "H2SO4",
+    "battery acid": "H2SO4",
+    "h2so4": "H2SO4",
+    "hydrochloric acid": "HCL",
+    "muriatic acid": "HCL",
+    "hcl": "HCL",
+    "chlorine": "CL2",
+    "hypochlorite": "CL2",
+    "bleach": "CL2",
+    "cl2": "CL2",
+    "ammonia": "NH3",
+    "nh3": "NH3",
+    "acetone": "ACETONE",
+    "propanone": "ACETONE",
+    "toluene": "TOLUENE",
+    "methanol": "METHANOL",
+    "lpg": "LPG",
+    "propane": "LPG",
+    "butane": "LPG",
+    "diesel": "DIESEL",
+    "petrol": "PETROL",
+    "gasoline": "PETROL",
+}
+
+
+def substance_code_for(substance):
+    """
+    Canonical code for a free-text substance, or None if unrecognised.
+
+    Longest key first, so "sodium hydroxide" wins over a bare "lye"
+    appearing elsewhere in the string. Returning None on no match is
+    deliberate -- a wrong code retrieves the wrong safety data, which is
+    worse than retrieving none.
+    """
+
+    text = (substance or "").lower()
+
+    if not text.strip():
+        return None
+
+    for name in sorted(SUBSTANCE_CODES, key=len, reverse=True):
+        if name in text:
+            return SUBSTANCE_CODES[name]
+
+    return None
+
 # Read timeout. The incident service may call an LLM, so this is
 # generous; a camera thread blocking for 30s is better than an incident
 # silently dropped.
@@ -239,26 +305,20 @@ def build_incident_request(violation, zone, source, confidence=None,
     endpoint -- do not "reconcile" the two.
     """
 
-    # Three names for two concepts, on purpose and temporarily. The
-    # incident service names these bay_id / substance_code /
-    # incident_type; this file grew up calling them zone / substance /
-    # hazard_type. Until one contract is agreed, both go on the wire --
-    # pydantic ignores unknown fields by default, so the cost is a few
-    # bytes and the benefit is that neither side can be broken by the
-    # other renaming first. Collapse this to one set once the real
-    # API_CONTRACT.md lands.
+    # One set of names on the wire: the incident service's. This file
+    # kept its own internal vocabulary (zone, violation) because renaming
+    # ~230 local uses would be churn with no benefit -- but everything
+    # that crosses the boundary uses bay_id / incident_type /
+    # substance_code, and this function is the only place the conversion
+    # happens. That was the point of isolating it.
     #
     # Lengths, measured, for the service's MAX_FIELD_CHARS=200:
     #   incident_type  <= 14 chars, bounded by the model's class names
-    #   bay_id         user-supplied via --zone, unbounded
-    #   substance_code user-supplied via --substance, unbounded
+    #   bay_id         operator-supplied via --zone, unbounded
+    #   substance_code <= 8 chars, from SUBSTANCE_CODES
     # Nothing this file generates on its own approaches 200.
     event = {
-        "zone": zone,
-        "bay": zone,
         "bay_id": zone,
-        "hazard_type": violation,
-        "violation": violation,
         "incident_type": violation,
         "source": source,     # "camera" | "kiosk" -- recorded, never branched on
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -269,12 +329,16 @@ def build_incident_request(violation, zone, source, confidence=None,
         event["confidence"] = round(float(confidence), 3)
 
     if substance is not None:
-        event["substance"] = substance
-        # Their field is named substance_code, which suggests an
-        # identifier ("NAOH-50") rather than the name this sends
-        # ("Sodium hydroxide (50% solution)"). Sent as-is until somebody
-        # owns that mapping; flagged rather than silently invented.
-        event["substance_code"] = substance
+        # The display name always travels, because a human reads the
+        # dossier and "NAOH" is not what they need to see. The code
+        # travels only when the substance is recognised -- an unmapped
+        # substance sends a name and no code, which the service must
+        # read as "unmapped", not as "no substance present".
+        event["substance_name"] = substance
+        code = substance_code_for(substance)
+
+        if code:
+            event["substance_code"] = code
 
     if camera_id is not None:
         event["camera_id"] = camera_id
@@ -1084,6 +1148,55 @@ def selftest():
     check("sustained flicker fires (known trade)", len(flickers) == 1,
           "%d fire in 20 alternating frames -- cooldown caps the rest"
           % len(flickers))
+
+    # -- the wire contract -------------------------------------------
+    # One set of names crosses the boundary. These assert the shape the
+    # incident service actually receives, so a rename here fails loudly
+    # instead of silently sending fields nobody reads.
+    wire = build_incident_request(
+        "NO-Hardhat", "BAY-3", "camera", confidence=0.91,
+        substance="Sodium hydroxide (50% solution)", language="en")
+
+    check("wire uses the contract's names",
+          {"bay_id", "incident_type", "substance_code"} <= set(wire),
+          ", ".join(sorted(wire)))
+
+    check("old names are gone from the wire",
+          not ({"zone", "bay", "hazard_type", "violation", "substance"} & set(wire)),
+          "no duplicate vocabulary on the wire")
+
+    check("substance maps to a code", wire["substance_code"] == "NAOH",
+          "%r -> %s" % (wire["substance_name"][:28], wire["substance_code"]))
+
+    check("display name still travels",
+          wire["substance_name"] == "Sodium hydroxide (50% solution)",
+          "a human reads the dossier, and NAOH is not what they need")
+
+    check("aliases map to the same code",
+          substance_code_for("caustic soda tank") == "NAOH"
+          and substance_code_for("NaOH 50%") == "NAOH",
+          "caustic soda / NaOH -> NAOH")
+
+    check("longest match wins",
+          substance_code_for("sulfuric acid") == "H2SO4", "not a partial hit")
+
+    # An unmapped substance must send a name and NO code. A wrong code
+    # retrieves the wrong safety data, which is worse than none.
+    unmapped = build_incident_request("NO-Hardhat", "BAY-3", "camera",
+                                      substance="Unobtainium slurry")
+    check("unknown substance sends no code",
+          "substance_code" not in unmapped
+          and unmapped["substance_name"] == "Unobtainium slurry",
+          "name travels, code omitted")
+
+    check("no substance sends neither field",
+          not ({"substance_code", "substance_name"}
+               & set(build_incident_request("NO-Hardhat", "B", "kiosk"))),
+          "absent, not empty-string")
+
+    check("incident_type stays within MAX_FIELD_CHARS",
+          len(wire["incident_type"]) <= 200,
+          "%d chars" % len(wire["incident_type"]))
 
     print("\n%d/%d gate checks passed" % (sum(checks), len(checks)))
     return 0 if all(checks) else 1
