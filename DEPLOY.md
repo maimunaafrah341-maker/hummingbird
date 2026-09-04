@@ -101,6 +101,58 @@ The second should return `severity`, `steps`, `spoken_alert` and
 
 ---
 
+## Vercel said "No FastAPI entrypoint found"
+
+```
+Error: No FastAPI entrypoint found in default locations, but found
+potential entrypoints:
+  api.py (variable: app)
+  incident_api.py (variable: app)
+```
+
+Vercel found **two** apps and refused to guess. It is the same trap as
+the Render Docker command, in different clothing — and note that
+Vercel's own suggested fix names the wrong one:
+
+> Add this to your pyproject.toml: `entrypoint = "api:app"`
+
+`api:app` is the **language service**. Taking that suggestion gives a
+green deploy that 404s every `/incident`.
+
+`pyproject.toml` is now in the repo with the right answer:
+
+```toml
+[tool.vercel]
+entrypoint = "incident_api:app"
+```
+
+Pull `main` and redeploy. Nothing else needs setting.
+
+### But first — is this project meant to be the backend?
+
+If that Vercel project was meant to serve the **frontend**, the real
+fix is different: set **Root Directory** to `frontend`. Vercel only
+tried to build Python because the root directory is blank, so it looked
+at the repo root and found a Python project.
+
+One Vercel project cannot be both.
+
+### And Bay Twin will not work on Vercel
+
+`GET /twin/stream` is a long-lived server-sent-events connection, and
+the event bus behind it is in-process memory. Serverless functions hold
+neither: the connection is cut at the function timeout, and two
+requests can land on two instances that share no state. The page will
+load and then sit empty.
+
+**So put the backend on Render** (a long-running container, section
+above) and the frontend on Vercel. That is the split the rest of this
+document assumes. The `pyproject.toml` is there so a Vercel backend
+deploy at least reaches the right app if somebody tries it — not
+because it is the recommended host.
+
+---
+
 ## Frontend — Vercel or Netlify
 
 | Field | Value |
