@@ -32,6 +32,7 @@ No auth, no body.
 {
   "status": "ok",
   "tiers": { "script": true, "semantic": null },
+  "retrieval": null,
   "languages": ["bn", "en", "hi", "te", "ur"]
 }
 ```
@@ -40,11 +41,44 @@ No auth, no body.
 |---|---|
 | `tiers.script` | Always `true`. Unicode-range detection needs nothing. |
 | `tiers.semantic` | `true` loaded, `false` cannot load here, **`null` nothing has needed it yet** |
+| `retrieval` | The FAISS index behind `/incident`: `true` loaded, `false` cannot load here, **`null` nothing has needed it yet** |
 
 `null` is not a bug. The embedding model loads lazily, so before the
 first Latin-script request there is genuinely no answer — reporting
 `true` or `false` would be a guess. Set `WARM_UP=1` if you need
 certainty at boot.
+
+`retrieval` follows the same rule and is read the same way. After one
+`/incident` request on a healthy deployment:
+
+```json
+{
+  "status": "ok",
+  "tiers": { "script": true, "semantic": true },
+  "retrieval": true,
+  "languages": ["bn", "en", "hi", "te", "ur"]
+}
+```
+
+and on a deployment whose index is missing or unreadable, after the
+first request has tried it:
+
+```json
+{
+  "status": "ok",
+  "tiers": { "script": true, "semantic": null },
+  "retrieval": false,
+  "languages": ["bn", "en", "hi", "te", "ur"]
+}
+```
+
+**`retrieval: false` does not make `/incident` fail** — it still
+answers, with `grounded: false`, from the model's general knowledge
+rather than the corpus. Reading this field is how you find that out
+before an operator does. Note that checking `/health` never *triggers*
+a load; it reports what the service has already discovered, so on a
+freshly started process the honest answer is `null` until something
+has actually asked for an assessment.
 
 ---
 
@@ -429,9 +463,10 @@ Featherless outage takes `/incident` down completely while the rest of
 the service keeps working. Degrade the kiosk accordingly rather than
 assuming the whole API is down.
 
-**There is no way to ask whether retrieval is live before using it.**
-`/health` reports the `script` and `semantic` detection tiers, but says
-nothing about the FAISS index — so unlike the semantic tier, a broken
-corpus can only be discovered after the fact, by reading `grounded:
-false` on a response you already paid for. Check that field on every
-response rather than sampling it once at startup.
+**Read `grounded` on every response, not `/health` once at startup.**
+`/health` does report the index state as `retrieval`, and it is worth
+checking — but it is lazy, so a freshly started process answers `null`
+until something has actually asked for an assessment, and a `true` from
+five minutes ago is not a promise about this request. `grounded` on the
+response you are holding is the only field that describes that
+response.

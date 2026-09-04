@@ -262,6 +262,14 @@ def health():
     the tier is lazy, so before the first Latin-script request there is
     genuinely no answer yet, and claiming either true or false would be
     a guess. Callers that need certainty should set WARM_UP=1.
+
+    `retrieval` reports the same three states about the FAISS index
+    behind /incident, for the same reason and with the same caveat.
+    Reading it is deliberately passive: it returns what the module has
+    already discovered and never triggers a load. Answering a health
+    check by loading a model would make the check the most expensive
+    request the service serves, and on a cold process it would block
+    the very probe that is meant to establish the process is alive.
     """
 
     return {
@@ -270,6 +278,7 @@ def health():
             "script": True,
             "semantic": language.semantic_tier_available(),
         },
+        "retrieval": incident.retrieval_available(),
         "languages": sorted(language.SUPPORTED_LANGUAGES),
     }
 
