@@ -1,0 +1,319 @@
+{
+  "manifest": {
+    "model": "intfloat/multilingual-e5-small",
+    "passage_prefix": "passage: ",
+    "dimension": 384,
+    "chunk_count": 34,
+    "corpus_sha256": "9b059a78429e7f8f36ba4571c61d0fd0dde35bfac062b45b90c3d69d2bdf2eb8",
+    "built_at": "2026-09-04T09:32:41Z",
+    "corpus_note": "Illustrative sample corpus drafted for development. Not real SDS documents and not real regulatory text. Must be replaced before any real deployment."
+  },
+  "chunks": [
+    {
+      "chunk_id": "reg_factories_act_excerpts.md#00",
+      "source_file": "reg_factories_act_excerpts.md",
+      "substance_code": null,
+      "section_title": "Section 41B — Compulsory disclosure of information by the occupier",
+      "doc_type": "regulation",
+      "text": "Section 41B — Compulsory disclosure of information by the occupier\n\nThe occupier of a factory involving a hazardous process must disclose\nall information concerning the dangers of that process, including\nhealth hazards and the measures to overcome them, to the workers\nemployed in the factory, to the Chief Inspector, to the local\nauthority, and to the general public in the vicinity.\n\nThe duty runs to the workers directly, not only to the regulator. A\nhazard assessment that exists in a file submitted to an authority, and\nthat the people working alongside the substance have never been shown,\ndoes not discharge this obligation.\n\nAt the time of registering a factory involving a hazardous process, the\noccupier must lay down a detailed policy with respect to the health and\nsafety of the workers, and must communicate it to the Chief Inspector\nand the local authority.\n\nThe occupier must draw up an on-site emergency plan and detailed\ndisaster control measures, and must make known to the workers employed\nand to the general public living in the vicinity the safety measures\nrequired to be taken in the event of an accident. A plan that has not\nbeen communicated to the people who would have to act on it is not an\nemergency plan; it is a document about one.\n\nWorkers must be informed of the imminent danger to their health and\nsafety arising from any accident or from any process, and of the\nremedial action to be taken.",
+      "token_estimate": 324
+    },
+    {
+      "chunk_id": "reg_factories_act_excerpts.md#01",
+      "source_file": "reg_factories_act_excerpts.md",
+      "substance_code": null,
+      "section_title": "Section 41C — Specific responsibility in relation to hazardous processes",
+      "doc_type": "regulation",
+      "text": "Section 41C — Specific responsibility in relation to hazardous processes\n\nThe occupier of every factory involving a hazardous process must\nmaintain accurate and up-to-date health records, or medical records, of\nthe workers who are exposed to any chemical, toxic or other harmful\nsubstance which is manufactured, stored, handled or transported in the\nfactory. Those records must be accessible to the workers subject to\nprescribed conditions.\n\nThe occupier must appoint persons who possess the qualifications and\nexperience prescribed for handling the hazardous substances involved,\nand who are competent to supervise that handling. Supervision of a\nhazardous process by a person qualified only in general production\nmanagement does not satisfy this requirement.\n\nThe occupier must provide for medical examination of every worker\nbefore their employment in a hazardous process, and thereafter at\nintervals not exceeding those prescribed, for as long as the worker\ncontinues to be employed in that process. Where a worker is found to\nhave contracted an occupational disease, they must not be employed in\nthat process until they have been certified fit.",
+      "token_estimate": 230
+    },
+    {
+      "chunk_id": "reg_factories_act_excerpts.md#02",
+      "source_file": "reg_factories_act_excerpts.md",
+      "substance_code": null,
+      "section_title": "Section 41H — Right of workers to warn about imminent danger",
+      "doc_type": "regulation",
+      "text": "Section 41H — Right of workers to warn about imminent danger\n\nWhere workers employed in a factory carrying on a hazardous process\nhave reasonable apprehension that there is a likelihood of imminent\ndanger to their lives or health, they may bring the matter to the\nnotice of the occupier, the agent, the manager or any other person in\ncharge of the factory, directly or through their representatives.\n\nThe person so notified must take immediate remedial action if satisfied\nthat there is a likelihood of imminent danger, and must send a report\nof the action taken to the nearest Inspector.\n\nIf the person notified is not satisfied that there is such a\nlikelihood, they must refer the matter to the nearest Inspector\nimmediately, and the Inspector's decision on the question is final.\n\nThe practical significance of this section is that it places the duty\nto act on the recipient of the warning, on a timescale set by the\ndanger rather than by the convenience of production. A worker who\nreports a smell of gas, a leaking valve or an unlabelled drum has\ndischarged their part; the obligation then sits with the person in\ncharge, and deferring the question to a later shift or a scheduled\nmeeting is not compliance.",
+      "token_estimate": 276
+    },
+    {
+      "chunk_id": "reg_factories_act_excerpts.md#03",
+      "source_file": "reg_factories_act_excerpts.md",
+      "substance_code": null,
+      "section_title": "Section 87 — Dangerous operations",
+      "doc_type": "regulation",
+      "text": "Section 87 — Dangerous operations\n\nWhere the State Government is satisfied that any operation carried on\nin a factory exposes the persons employed in it to a serious risk of\nbodily injury, poisoning or disease, it may make rules applicable to\nthat operation.\n\nSuch rules may prohibit or restrict the employment of women,\nadolescents or children in that operation; require periodical medical\nexamination of the persons employed and prohibit the employment of any\nperson not certified fit; require the provision of protective\nequipment, of washing facilities and of accommodation for clothing kept\noff during the operation; and require the exhaust of fumes, dust and\nother impurities at their point of origin rather than their dilution in\nthe general workroom air.\n\nThe preference for control at source over general ventilation is\ndeliberate. Diluting a contaminant across a workroom reduces the\nmeasured concentration without removing the exposure, and it moves the\nhazard to workers who have no involvement in the operation that\nproduced it.",
+      "token_estimate": 215
+    },
+    {
+      "chunk_id": "reg_factories_act_excerpts.md#04",
+      "source_file": "reg_factories_act_excerpts.md",
+      "substance_code": null,
+      "section_title": "Section 38 — Precautions in case of fire",
+      "doc_type": "regulation",
+      "text": "Section 38 — Precautions in case of fire\n\nEvery factory must be provided with such means of escape in case of\nfire as may be prescribed, and the means of escape must be maintained\nfree of obstruction and available for use at all material times.\n\nEvery factory must be provided with effective and clearly audible means\nof giving warning in the case of fire to every person employed in it. A\nwarning system that is inaudible over the noise of the plant it\nprotects does not satisfy this requirement.\n\nEvery door affording a means of escape must not be locked or fastened\nso that it cannot be easily and immediately opened from the inside\nwhile any person is within the factory, and every such door must, save\nin prescribed cases, be constructed to open outwards. Doors locked\nagainst theft during a shift, and doors obstructed by stored material,\nare the two most common ways in which a compliant escape route becomes\na non-compliant one without anything being formally changed.\n\nEffective measures must be taken to ensure that all the workers are\nfamiliar with the means of escape and have been adequately trained in\nthe routine to be followed in the case of fire.",
+      "token_estimate": 269
+    },
+    {
+      "chunk_id": "reg_osha_excerpts.md#00",
+      "source_file": "reg_osha_excerpts.md",
+      "substance_code": null,
+      "section_title": "1910.151(c) — Emergency eyewash and drench facilities",
+      "doc_type": "regulation",
+      "text": "1910.151(c) — Emergency eyewash and drench facilities\n\nWhere the eyes or body of any person may be exposed to injurious\ncorrosive materials during their work, suitable facilities for quick\ndrenching or flushing of the eyes and body must be provided within the\nwork area for immediate emergency use.\n\nThe accepted interpretation of \"within the work area\" is that the\nfacility is reachable in about ten seconds of unimpeded travel, which\nis commonly implemented as a distance of roughly fifteen metres on the\nsame level, along a path with no doors to open, no stairs to climb and\nno obstruction to step around. The reason for the time limit rather\nthan a pure distance limit is that a casualty with a corrosive\nsubstance in their eyes cannot see where they are going, so a route\nthat is short on a drawing may be impassable in practice.\n\nFacilities must deliver clean water at a rate and for a duration\nsufficient to support the irrigation times specified for the substances\nin use, which for strong alkalis may be an hour or more. A unit that\ndelivers a brief trickle does not satisfy this requirement, and a\ntrickle applied to concentrated corrosives can be actively harmful.\n\nPlumbed units should be activated weekly to flush the line and to\nconfirm they still function; self-contained units require their fluid\nto be maintained and replaced. An eyewash that has never been tested\nis, in practice, unlikely to work on the day it is needed.",
+      "token_estimate": 328
+    },
+    {
+      "chunk_id": "reg_osha_excerpts.md#01",
+      "source_file": "reg_osha_excerpts.md",
+      "substance_code": null,
+      "section_title": "1910.1200 — Hazard communication",
+      "doc_type": "regulation",
+      "text": "1910.1200 — Hazard communication\n\nEmployers must maintain a safety data sheet for every hazardous\nchemical in the workplace, and those sheets must be readily accessible\nto employees in their work area during each work shift.\n\n\"Readily accessible\" means the worker can get to the information\nwithout asking permission, without a password they do not have, and\nwithout waiting for a supervisor to unlock an office. A binder locked\nin a manager's room during the night shift does not satisfy this\nrequirement, and neither does an electronic system that is unavailable\nwhen the site network is down. Where sheets are held electronically, a\nreliable backup must exist for the situation in which the electronic\nsystem cannot be reached — which includes the emergency the sheets are\nneeded for.\n\nContainers must be labelled with the product identifier and the\nappropriate hazard warnings, and labels must not be removed or\ndefaced. Decanted material in an unlabelled secondary container is a\nrecurring cause of a responder treating the wrong substance.\n\nEmployees must be trained on the hazards of the chemicals in their work\narea, on the measures they can take to protect themselves, and on the\ndetails of the employer's hazard communication programme, at the time\nof their initial assignment and whenever a new hazard is introduced.",
+      "token_estimate": 283
+    },
+    {
+      "chunk_id": "reg_osha_excerpts.md#02",
+      "source_file": "reg_osha_excerpts.md",
+      "substance_code": null,
+      "section_title": "1910.134 — Respiratory protection in IDLH atmospheres",
+      "doc_type": "regulation",
+      "text": "1910.134 — Respiratory protection in IDLH atmospheres\n\nAn atmosphere that is immediately dangerous to life or health requires\na full-facepiece pressure-demand self-contained breathing apparatus, or\na combination supplied-air respirator with an auxiliary self-contained\nsupply. Air-purifying respirators — cartridge and canister masks — are\nnot adequate in an IDLH atmosphere and must not be used in one. A\ncartridge mask offers no protection where the atmosphere is\noxygen-deficient, and its cartridge has a finite and unmonitored\ncapacity for the contaminant.\n\nWhere employees enter an IDLH atmosphere, at least one trained employee\nmust be located outside it, in visual, voice or signal-line\ncommunication with those inside, equipped for and trained in rescue,\nand provided with the equipment needed to effect it. The employer must\nbe notified before the standby person enters to attempt a rescue.\n\nRespirators must be selected for the specific contaminant, fit-tested\nto the individual wearer, inspected before each use and maintained.\nFacial hair that interferes with the sealing surface prevents an\nadequate seal, and a respirator that does not seal provides confidence\nwithout protection.",
+      "token_estimate": 232
+    },
+    {
+      "chunk_id": "reg_osha_excerpts.md#03",
+      "source_file": "reg_osha_excerpts.md",
+      "substance_code": null,
+      "section_title": "1910.146 — Permit-required confined spaces",
+      "doc_type": "regulation",
+      "text": "1910.146 — Permit-required confined spaces\n\nA confined space that contains or may contain a hazardous atmosphere is\na permit-required confined space, and entry to it requires a written\npermit, atmospheric testing before and during entry, an attendant\nstationed outside for the duration, and rescue provisions arranged\nbefore entry rather than improvised afterwards.\n\nAtmospheric testing must be carried out in the order oxygen first, then\nflammable gases and vapours, then toxic contaminants, and must sample\nthe space at the top, middle and bottom. Testing only at the opening\nmisses exactly the stratified accumulation that makes these spaces\nlethal — a heavier-than-air contaminant sits at the bottom, which is\nwhere the worker's head will be when they reach the floor.\n\nThe attendant must remain outside the space, must monitor the\nauthorised entrants, and must not enter the space to attempt a rescue.\nA very large proportion of confined space fatalities are would-be\nrescuers who entered without equipment to help a colleague who had\ncollapsed, and who then collapsed for the same reason. Rescue must be\nperformed from outside the space wherever possible, using retrieval\nequipment, and otherwise only by trained rescuers with breathing\napparatus.",
+      "token_estimate": 255
+    },
+    {
+      "chunk_id": "reg_osha_excerpts.md#04",
+      "source_file": "reg_osha_excerpts.md",
+      "substance_code": null,
+      "section_title": "1910.120(q) — Emergency response to hazardous substance releases",
+      "doc_type": "regulation",
+      "text": "1910.120(q) — Emergency response to hazardous substance releases\n\nAn employer whose employees may respond to a release of a hazardous\nsubstance must have a written emergency response plan in place before\nthe response, covering roles, lines of authority, communication,\nevacuation routes, decontamination, and the criteria for calling in\noutside assistance.\n\nResponders must be trained to a level appropriate to the role they will\nactually perform. First responders at the awareness level are trained\nto recognise a release, initiate the emergency response sequence and\nprotect themselves — and specifically to take no further action.\nEmployees who will attempt to stop a release from a safe distance, or\nwho will approach it, require substantially more training and are\nrequired to work under an incident command system.\n\nNo employee who has not been trained to the required level may attempt\nto stop a release, plug a leak, or enter the area of a release. The\nuntrained employee's correct action is to raise the alarm, evacuate,\nand account for people — and the plan must make this explicit, because\nin the absence of an explicit instruction the instinct of a competent\nworker who knows the plant is to go and deal with it.\n\nAn incident commander must be identified and must be the person who\nauthorises entry, sets the isolation distances and authorises re-entry\nonce the release is controlled.",
+      "token_estimate": 299
+    },
+    {
+      "chunk_id": "sds_ammonia.md#00",
+      "source_file": "sds_ammonia.md",
+      "substance_code": "NH3",
+      "section_title": "Section 2 — Hazards Identification",
+      "doc_type": "sds",
+      "text": "Section 2 — Hazards Identification\n\nAnhydrous ammonia is a colourless gas with an extremely sharp,\nsuffocating odour, handled industrially as a liquefied gas under\npressure and used widely as a refrigerant. It is corrosive and acutely\ntoxic by inhalation, and it is flammable within a narrow range.\n\nThe gas has a strong affinity for water and therefore attacks moist\ntissue preferentially: eyes, mouth, throat, upper airway and any sweaty\nor damp skin. Injury is alkaline in character, which matters\nclinically, because alkali burns keep penetrating deeper into tissue\nlong after the initial contact rather than forming a limiting layer of\ncoagulated protein the way acid burns tend to.\n\nLiquid ammonia released from a pressurised system flashes to gas and\nabsorbs a great deal of heat doing so, so direct contact with the\nliquid or with the cold vapour stream produces frostbite in addition to\nchemical burns. Anyone handling a liquid release is facing two\ndifferent injury mechanisms on the same square centimetre of skin.\n\nPure ammonia gas is lighter than air and will rise and disperse. This\nis widely and dangerously over-generalised. A large release of\nrefrigerated liquid produces a cold, dense aerosol of gas and suspended\ndroplets that behaves as a heavy cloud at first, hugging the ground and\nflowing into low areas exactly as chlorine would, until it warms enough\nto lift. Do not treat low ground as safe during a large or refrigerated\nrelease.\n\nThe odour is unmistakable and detectable far below harmful\nconcentrations, but as with chlorine it must never be used to declare\nan area clear. Exposure limit is taken here as 25 ppm as an eight-hour\ntime-weighted average, with an IDLH value of 300 ppm. Ammonia is\nflammable in air between roughly 15 and 28 per cent by volume, a range\nthat is hard to reach outdoors but readily reached inside a plant room.",
+      "token_estimate": 412
+    },
+    {
+      "chunk_id": "sds_ammonia.md#01",
+      "source_file": "sds_ammonia.md",
+      "substance_code": "NH3",
+      "section_title": "Section 4 — First-Aid Measures",
+      "doc_type": "sds",
+      "text": "Section 4 — First-Aid Measures\n\nMove the affected person to fresh air, upwind of the release, and do\nnot attempt entry into a plant room or confined space without breathing\napparatus and a standby person.\n\nFor eye contact, irrigate immediately with clean water for at least\n20 minutes, holding the eyelids open, and continue irrigation during\ntransport to medical care. Alkali eye injury is a genuine emergency and\nthe duration of irrigation is the single factor most strongly\nassociated with the outcome. Do not stop early because the casualty\nsays the pain has eased.\n\nFor skin contact, remove contaminated clothing while flushing with\ncopious water and continue for at least 20 minutes. Where clothing has\nfrozen to the skin, thaw it in place with lukewarm water rather than\npulling it away, which removes skin with it.\n\nDo not attempt to neutralise ammonia on skin or in the eye with any\nacidic solution, including vinegar, dilute acetic acid, citrus juice or\nany proprietary neutraliser. Neutralisation is an exothermic reaction\noccurring on already-damaged tissue and adds a thermal burn to a\nchemical one. Water, in quantity, for a long time, is the treatment.\n\nIf ammonia has been swallowed, do not induce vomiting: the caustic\nliquid injures the oesophagus a second time on the way back up, and\nvomit may be aspirated. Do not attempt to neutralise it in the stomach.\nIf the casualty is fully conscious and able to swallow, small sips of\nwater are acceptable. Give nothing by mouth to a casualty who is\ndrowsy, convulsing or unconscious.\n\nCasualties with significant inhalation exposure require medical\nobservation for delayed airway swelling and pulmonary oedema even if\nthey appear to recover at the scene.",
+      "token_estimate": 373
+    },
+    {
+      "chunk_id": "sds_ammonia.md#02",
+      "source_file": "sds_ammonia.md",
+      "substance_code": "NH3",
+      "section_title": "Section 5 — Fire-Fighting Measures",
+      "doc_type": "sds",
+      "text": "Section 5 — Fire-Fighting Measures\n\nAmmonia is flammable between approximately 15 and 28 per cent in air.\nOutdoors it usually disperses below that range; inside a compressor\nhouse, cold store or other enclosed plant space it can readily form an\nexplosive atmosphere, and that space may also contain the ignition\nsource.\n\nStop the flow of gas if the isolation valve can be reached safely. Do\nnot extinguish a burning ammonia release while gas continues to flow —\nextinguishing the flame converts a visible, localised, largely\nconsumed release into an invisible toxic cloud accumulating in the same\nbuilding. Control the fire, cool the surroundings, and isolate the\nsource.\n\nUse water spray to knock down and disperse vapour and to cool exposed\ncontainers. Do not direct a water jet into a pool of liquid ammonia.\nWater is much warmer than the boiling liquid and adds heat to it,\nproducing vigorous boiling and a far larger vapour cloud than the pool\nwas generating on its own. Apply water as a fine spray to the vapour\nabove the pool, not into the pool itself.\n\nWater used for vapour suppression becomes strongly alkaline ammonia\nsolution and must be contained and prevented from entering drains or\nwatercourses, where it is severely toxic to fish.\n\nFire-fighters require self-contained breathing apparatus and full\nchemical protective clothing.",
+      "token_estimate": 289
+    },
+    {
+      "chunk_id": "sds_ammonia.md#03",
+      "source_file": "sds_ammonia.md",
+      "substance_code": "NH3",
+      "section_title": "Section 6 — Accidental Release Measures",
+      "doc_type": "sds",
+      "text": "Section 6 — Accidental Release Measures\n\nRaise the alarm, evacuate crosswind then upwind, and account for\npersonnel by name. Ventilate enclosed plant rooms remotely if fixed\nventilation can be started from outside; do not enter to open a door or\nstart a fan.\n\nIsolate the area for at least 100 metres for a small leak and\nconsiderably further downwind for a large one. During a large or\nrefrigerated release, evacuate low-lying ground as well, for the reason\ngiven in Section 2 — the initial cold cloud is dense and does not\nbehave like the buoyant gas that ammonia becomes later.\n\nOnly trained responders in self-contained breathing apparatus and\nprotective clothing may approach. Isolate at source where the valve is\nreachable without entering the cloud.\n\nAmmonia must never be mixed with chlorine, with hypochlorite bleach or\nwith any other chlorine donor as part of a response. The reaction\nproduces chloramines and potentially nitrogen trichloride, adding an\nexplosive and a second toxic gas to an incident that already has one.\nOn a site holding both substances this is the most consequential\nmistake available to a responder, and it is usually made with good\nintentions by someone trying to neutralise a spill.\n\nDo not allow ammonia or ammonia-contaminated water to enter drains,\nsewers or watercourses.",
+      "token_estimate": 281
+    },
+    {
+      "chunk_id": "sds_ammonia.md#04",
+      "source_file": "sds_ammonia.md",
+      "substance_code": "NH3",
+      "section_title": "Section 7 — Handling and Storage",
+      "doc_type": "sds",
+      "text": "Section 7 — Handling and Storage\n\nStore in a cool, dry, well-ventilated area away from heat and direct\nsunlight, with cylinders upright and secured. Refrigeration plant must\nhave gas detection in the plant room, ventilation that can be started\nfrom outside it, and an emergency stop that isolates the compressors\nfrom a safe position.\n\nSegregate ammonia from chlorine, from hypochlorites, from strong acids\nand from halogens by distance or by a fire-resistant barrier. Storing\nammonia and chlorine in the same room is a recognised precursor to a\nmulti-substance incident and must not be done regardless of how the\ncontainers are labelled.\n\nUse steel or approved alloys for ammonia service. Copper, brass, bronze\nand zinc and their alloys are attacked rapidly by ammonia and must\nnever be used for fittings, gauges, valves or lines. A brass fitting\ninstalled as a convenient substitute is a common root cause of\nsubsequent releases.\n\nKeep an eyewash station and emergency shower immediately adjacent to\nany area where ammonia is transferred or decanted, and verify by test\nthat they run clean water at an adequate rate.",
+      "token_estimate": 239
+    },
+    {
+      "chunk_id": "sds_ammonia.md#05",
+      "source_file": "sds_ammonia.md",
+      "substance_code": "NH3",
+      "section_title": "Section 10 — Stability and Reactivity",
+      "doc_type": "sds",
+      "text": "Section 10 — Stability and Reactivity\n\nStable under the storage conditions described above.\n\nReacts violently with chlorine and with hypochlorites to form\nchloramines and, under some conditions, the shock-sensitive explosive\nnitrogen trichloride.\n\nReacts vigorously and exothermically with strong acids. Neutralisation\nof a bulk ammonia spill with acid is not an approved response and has\ncaused injury through violent boiling and spattering.\n\nAttacks copper, brass, bronze, zinc and their alloys, and forms\nexplosive compounds with mercury, silver and gold salts. Mercury\nmanometers must not be used on ammonia systems.\n\nHazardous decomposition products include nitrogen oxides and, in\ncontact with chlorine donors, chloramines and nitrogen trichloride.",
+      "token_estimate": 138
+    },
+    {
+      "chunk_id": "sds_caustic_soda.md#00",
+      "source_file": "sds_caustic_soda.md",
+      "substance_code": "NAOH",
+      "section_title": "Section 2 — Hazards Identification",
+      "doc_type": "sds",
+      "text": "Section 2 — Hazards Identification\n\nSodium hydroxide, commonly called caustic soda or lye, is supplied as\nwhite deliquescent pellets, flakes or beads, or as a colourless\nsolution of varying strength. It is odourless and severely corrosive to\nskin, eyes and the respiratory and digestive tracts.\n\nAlkali burns are more dangerous than acid burns of comparable strength\nand are consistently underestimated at the scene, for two reasons that\nmatter operationally. First, alkali saponifies fat and dissolves\nprotein rather than coagulating it, so there is no barrier layer formed\nand the injury continues to penetrate for as long as the substance\nremains in contact. Second, the initial contact is often not\nparticularly painful — caustic solution feels soapy and slippery on the\nskin, and that slipperiness is the surface layer of the worker's own\nskin being dissolved. A casualty may not report a splash until\nsignificant damage has been done.\n\nEye contact is a sight-threatening emergency. Alkali penetrates the\ncornea within seconds and can reach the anterior chamber, and the\noutcome depends heavily on how quickly and how long irrigation is\ncarried out.\n\nDissolving solid caustic soda in water releases a large amount of heat.\nA concentrated solution can approach boiling in an open vessel, and hot\ncaustic solution splashed onto skin delivers a thermal and a chemical\nburn together.\n\nDust from pellets or flakes is corrosive to the airway. Occupational\nexposure limit is taken here as 2 mg/m³ as a ceiling value, not a\ntime-weighted average — the limit is not to be exceeded at any moment.",
+      "token_estimate": 340
+    },
+    {
+      "chunk_id": "sds_caustic_soda.md#01",
+      "source_file": "sds_caustic_soda.md",
+      "substance_code": "NAOH",
+      "section_title": "Section 4 — First-Aid Measures",
+      "doc_type": "sds",
+      "text": "Section 4 — First-Aid Measures\n\nFor eye contact, irrigate immediately with clean water and continue for\nat least 60 minutes, holding the eyelids apart, and continue during\ntransport to medical care. The irrigation time for alkali eye injury is\nsubstantially longer than for acid, and stopping early because the\ncasualty reports relief is a recognised cause of avoidable sight loss.\nObtain ophthalmic assessment for any caustic eye exposure, however\nminor it appears.\n\nFor skin contact, flush with large quantities of running water for at\nleast 30 minutes while removing contaminated clothing, footwear and\njewellery. Continue flushing until the slippery, soapy feel of the skin\nhas gone; while it persists, alkali is still present and still\nreacting.\n\nWhere solid caustic pellets or flakes are on the skin, brush off the\ndry material first, then irrigate with a large and continuous flow.\nWetting solid caustic with a small quantity of water generates heat and\nproduces a concentrated hot solution in contact with the skin, which is\nworse than either the dry solid or a proper flood of water.\n\nDo not attempt to neutralise caustic on skin or in the eye with vinegar,\ncitric acid, boric acid or any other acidic solution. The reaction is\nexothermic and takes place on tissue that is already injured. Water, in\nquantity, for a long time, is the treatment.\n\nIf swallowed, do not induce vomiting. Returning caustic across the\noesophagus a second time compounds the injury and risks aspiration into\nthe lungs. Do not attempt neutralisation in the stomach. Do not give\nanything by mouth to a casualty who is drowsy, convulsing or\nunconscious. If the casualty is fully conscious and able to swallow,\nsmall sips of water or milk to dilute are acceptable. Obtain immediate\nmedical attention.\n\nCasualties with airway exposure to dust or mist require observation for\ndelayed swelling.",
+      "token_estimate": 404
+    },
+    {
+      "chunk_id": "sds_caustic_soda.md#02",
+      "source_file": "sds_caustic_soda.md",
+      "substance_code": "NAOH",
+      "section_title": "Section 5 — Fire-Fighting Measures",
+      "doc_type": "sds",
+      "text": "Section 5 — Fire-Fighting Measures\n\nSodium hydroxide does not burn and will not support combustion. The\nhazards in a fire are the heat generated when water contacts the solid,\nthe corrosive nature of the resulting solution, and the hydrogen\nproduced by caustic attacking certain metals.\n\nUse an extinguishing medium appropriate to the surrounding fire. Where\nsolid caustic soda is stored, prefer dry chemical or carbon dioxide in\nthe immediate vicinity.\n\nDo not apply a water jet directly onto bulk solid caustic soda. The\nheat of solution is substantial, and hosing a drum of pellets produces\na hot, concentrated, strongly corrosive liquid that spreads across the\nfloor and spatters. Where water must be used on a surrounding fire,\napply it so that run-off does not reach stored solid caustic.\n\nCaustic soda in contact with aluminium, zinc, tin and their alloys\nliberates hydrogen, which is flammable and easily ignited. A caustic\nspill onto aluminium plant or an aluminium bund inside a burning\nbuilding adds an explosion hazard.\n\nFire-fighters require self-contained breathing apparatus and full\nchemical protective clothing. Run-off water will be strongly alkaline\nand must be contained.",
+      "token_estimate": 246
+    },
+    {
+      "chunk_id": "sds_caustic_soda.md#03",
+      "source_file": "sds_caustic_soda.md",
+      "substance_code": "NAOH",
+      "section_title": "Section 6 — Accidental Release Measures",
+      "doc_type": "sds",
+      "text": "Section 6 — Accidental Release Measures\n\nEvacuate the immediate area and isolate it. Responders require\nalkali-resistant suit, gloves, boots and full face protection, with\nrespiratory protection where dust or mist is present.\n\nFor a solid spill, sweep or shovel the dry material into a labelled\ncontainer for disposal, avoiding dust generation. Do not wash a bulk\nsolid spill down with water as the first action; dissolving it releases\nheat and converts a contained, sweepable solid into a spreading\ncorrosive liquid that will run into drains and low areas. Recover the\nbulk dry, then wash the residue.\n\nFor a solution spill, contain with dry inert absorbent — sand, earth or\na proprietary absorbent — and prevent entry to drains, sewers and\nwatercourses.\n\nNeutralisation of a contained spill with a dilute weak acid may be\ncarried out by trained personnel, cautiously and from the edge inward,\nadding the acid slowly to the caustic. The reaction is exothermic and\nadding acid quickly produces violent boiling and spattering of caustic\nsolution. Do not attempt to neutralise a large spill; contain it and\narrange professional removal.\n\nWash the area down only after the bulk material has been recovered, and\ncheck the pH of the washings before allowing them to drain.",
+      "token_estimate": 272
+    },
+    {
+      "chunk_id": "sds_caustic_soda.md#04",
+      "source_file": "sds_caustic_soda.md",
+      "substance_code": "NAOH",
+      "section_title": "Section 7 — Handling and Storage",
+      "doc_type": "sds",
+      "text": "Section 7 — Handling and Storage\n\nAlways add caustic soda to water, slowly, with stirring, and never add\nwater to solid caustic soda. Water poured onto pellets generates intense\nlocalised heat, can boil, and ejects concentrated hot caustic out of the\nvessel. This ordering is the most important handling rule for this\nsubstance, and it is the mirror image of the rule for sulphuric acid —\nin both cases the concentrated material goes into the water, never the\nreverse.\n\nKeep containers tightly closed. Solid caustic soda is deliquescent: it\nabsorbs moisture and carbon dioxide from the air, cakes, and can\ngenerate heat inside a drum left open in humid conditions.\n\nStore in a cool, dry, well-ventilated area with an alkali-resistant\nbunded floor that does not drain to a public sewer. Keep clear of any\narea subject to flooding or roof leaks, since water reaching stored\nsolid caustic is itself the incident.\n\nSegregate from acids, from water-reactive materials, and from\naluminium, zinc, tin and their alloys. Do not use aluminium containers,\nfunnels, scoops or fittings for caustic soda in any circumstances.\n\nProvide an emergency shower and eyewash immediately adjacent to any\npoint where caustic is handled or decanted, and verify by test that\nthey deliver a large and sustained flow of clean water.",
+      "token_estimate": 281
+    },
+    {
+      "chunk_id": "sds_caustic_soda.md#05",
+      "source_file": "sds_caustic_soda.md",
+      "substance_code": "NAOH",
+      "section_title": "Section 10 — Stability and Reactivity",
+      "doc_type": "sds",
+      "text": "Section 10 — Stability and Reactivity\n\nStable under the storage conditions described above. Deliquescent, and\nabsorbs carbon dioxide from the air to form sodium carbonate.\n\nDissolution in water is strongly exothermic.\n\nReacts violently and exothermically with acids. Neutralisation of bulk\nmaterial without control of the addition rate produces boiling and\nspattering.\n\nAttacks aluminium, zinc, tin and their alloys, liberating hydrogen,\nwhich is flammable over a very wide range in air. This reaction is the\nmost commonly overlooked hazard of the substance, because caustic soda\nis not itself flammable and the hydrogen is generated quietly at\nordinary temperatures.\n\nReacts with some organic halogen compounds and with nitro compounds,\nin some cases violently. Attacks glass slowly, and attacks leather,\nwool and other protein materials, including the protein of skin.\n\nHazardous decomposition products include hydrogen on contact with\nsusceptible metals.",
+      "token_estimate": 182
+    },
+    {
+      "chunk_id": "sds_chlorine.md#00",
+      "source_file": "sds_chlorine.md",
+      "substance_code": "CL2",
+      "section_title": "Section 2 — Hazards Identification",
+      "doc_type": "sds",
+      "text": "Section 2 — Hazards Identification\n\nChlorine is a greenish-yellow gas with a sharp, penetrating odour,\nshipped and stored as a liquefied gas under pressure. It is acutely\ntoxic by inhalation and corrosive to the eyes and the entire\nrespiratory tract. Exposure at low concentrations causes stinging eyes,\nthroat irritation and coughing; at higher concentrations it causes\nchest tightness, chemical bronchitis and pulmonary oedema, which may be\nfatal.\n\nThe gas is roughly two and a half times heavier than air. A release\ndoes not disperse upward; it flows downhill and collects in pits,\ntrenches, sumps, basements, inspection chambers and any other low-lying\nspace. Personnel standing at ground level in a depression can be in a\nlethal concentration while the air two metres above them is breathable.\nThis single property governs almost every response instruction in this\ndocument.\n\nThe odour is detectable well below the concentration that causes\ninjury, which is genuinely protective, but olfactory fatigue sets in\nquickly. A worker who reports that the smell has faded has very\nprobably not moved into cleaner air; they have lost the ability to\nsmell the contaminant they are still standing in. Smell must never be\nused to decide that an area has become safe.\n\nChlorine is not itself flammable, but it is a strong oxidiser and will\nvigorously support the combustion of materials that do not normally\nburn readily in air. Occupational exposure limit is taken here as\n0.5 ppm as an eight-hour time-weighted average, with an IDLH value of\n10 ppm.",
+      "token_estimate": 331
+    },
+    {
+      "chunk_id": "sds_chlorine.md#01",
+      "source_file": "sds_chlorine.md",
+      "substance_code": "CL2",
+      "section_title": "Section 4 — First-Aid Measures",
+      "doc_type": "sds",
+      "text": "Section 4 — First-Aid Measures\n\nMove the affected person to fresh air immediately, travelling\ncrosswind and then upwind of the release. Because the gas pools at low\nlevel, moving the casualty upward and outward matters as much as moving\nthem away — carrying someone along a trench to a distant exit can keep\nthem in the cloud for the whole journey.\n\nDo not enter a suspected chlorine atmosphere to perform a rescue\nwithout self-contained breathing apparatus and a second trained person\nstanding by. Untrained rescuers entering low-lying spaces are a\nrecurring cause of multiple casualties from a single-casualty\nincident.\n\nIf breathing has stopped, a trained responder should give assisted\nventilation using a bag-valve mask with supplemental oxygen. Direct\nmouth-to-mouth ventilation is contraindicated: the rescuer inhales\ncontaminated air from the casualty's airway.\n\nFor eye contact, flush with clean water for at least 15 minutes,\nholding the eyelids apart. For skin contact, remove contaminated\nclothing while flushing and continue flushing the skin for at least\n15 minutes. Contact lenses should be removed if this can be done\nwithout delaying irrigation.\n\nEvery person with a significant inhalation exposure must be kept under\nmedical observation even if they appear to have recovered completely.\nPulmonary oedema can be delayed by up to 24 to 48 hours, and a casualty\nwho feels well at the scene may deteriorate severely overnight. Do not\ndischarge an exposed worker back to the floor on the strength of them\nsaying they feel fine.",
+      "token_estimate": 323
+    },
+    {
+      "chunk_id": "sds_chlorine.md#02",
+      "source_file": "sds_chlorine.md",
+      "substance_code": "CL2",
+      "section_title": "Section 5 — Fire-Fighting Measures",
+      "doc_type": "sds",
+      "text": "Section 5 — Fire-Fighting Measures\n\nChlorine does not burn. In a fire involving chlorine containers, the\nhazard is the container itself: heat raises the internal pressure and\ncan rupture the cylinder or actuate its fusible plug, converting a\ncontained inventory into a sudden large release.\n\nCool containers exposed to fire with water spray applied from a\nprotected position or an unmanned monitor, from as far away as the\nequipment allows.\n\nDo not apply water directly to a chlorine leak. Water and chlorine form\nhydrochloric and hypochlorous acids, which aggressively attack the\nsteel of the cylinder, valve and fittings. A water jet aimed at a small\nleak with the intention of knocking down the gas reliably enlarges the\nleak it was aimed at, and can turn a weeping valve into an open one.\nWater spray may be used at a distance to suppress and direct a vapour\ncloud, but never played onto the leaking vessel or its valve.\n\nNever immerse a leaking cylinder in water, and never place it in a tank\nor drum of water or caustic solution. The internal pressure of the\ncylinder is higher than the head of liquid, so the leak does not stop;\nwater is instead drawn into the cylinder as it empties and cools,\nproducing violent internal corrosion.\n\nFire-fighters must wear self-contained breathing apparatus and full\nprotective clothing. Ordinary structural fire kit does not protect\nagainst chlorine.",
+      "token_estimate": 308
+    },
+    {
+      "chunk_id": "sds_chlorine.md#03",
+      "source_file": "sds_chlorine.md",
+      "substance_code": "CL2",
+      "section_title": "Section 6 — Accidental Release Measures",
+      "doc_type": "sds",
+      "text": "Section 6 — Accidental Release Measures\n\nRaise the alarm and evacuate immediately, moving crosswind first and\nthen upwind. Account for personnel by name; a headcount alone will not\nidentify who is still in a pit.\n\nEstablish an initial isolation zone of at least 100 metres in all\ndirections for a small leak, extended substantially downwind for a\nlarge one, and deny entry to everyone without breathing apparatus.\nEvacuate all low-lying areas within and beyond that radius, including\nbasements, cable trenches, drainage chambers and any adjacent building\nwith below-grade space, because the gas will find them.\n\nOnly personnel trained in chlorine emergency response, wearing\nself-contained breathing apparatus and chemically resistant protective\nclothing, may approach to attempt isolation. Shut off the supply at\nsource if the valve can be reached safely; do not attempt a repair on a\npressurised system.\n\nIf a cylinder is leaking, position it so that the leak is in the vapour\nspace rather than the liquid space — rotating a horizontal cylinder so\nthe leak points upward reduces the discharge rate by a large factor,\nbecause liquid chlorine expands to several hundred times its volume as\ngas.\n\nPrevent the release from entering drains, sewers and watercourses.\nVentilate the area only after the source has been isolated, and\nre-entry must be authorised on the basis of instrument readings, never\non the basis of smell.",
+      "token_estimate": 299
+    },
+    {
+      "chunk_id": "sds_chlorine.md#04",
+      "source_file": "sds_chlorine.md",
+      "substance_code": "CL2",
+      "section_title": "Section 7 — Handling and Storage",
+      "doc_type": "sds",
+      "text": "Section 7 — Handling and Storage\n\nStore cylinders upright and secured against falling, in a cool, dry,\nwell-ventilated area that is not below ground level and does not drain\ninto an occupied space. Keep the storage temperature below 45 °C and\nprotect containers from direct sunlight and from any radiant heat\nsource.\n\nValve protection caps must be in place whenever a cylinder is not\nconnected and in use. Move cylinders with a proper trolley; never lift\none by its valve or cap, and never roll or drag a cylinder to move it\nacross a site.\n\nSegregate chlorine from incompatible materials by distance or by a\nfire-resistant barrier, not merely by labelling. Ammonia in particular\nmust never be stored in the same room, and the two must never be\nhandled in a way that allows an accidental connection between them.\nAlso segregate from hydrogen, hydrocarbons, turpentine, ether, finely\ndivided metals and all flammable materials.\n\nUse only equipment, gaskets and lubricants specified for chlorine\nservice. Ordinary oils and greases react with chlorine and have caused\nignition inside valves. Systems must be scrupulously dry, because dry\nchlorine is relatively compatible with steel while wet chlorine is\nseverely corrosive to it.\n\nFixed gas detection should be installed at low level, where the gas\nwill actually be, rather than at head height where a detector will\nreport clean air during a serious release.",
+      "token_estimate": 303
+    },
+    {
+      "chunk_id": "sds_chlorine.md#05",
+      "source_file": "sds_chlorine.md",
+      "substance_code": "CL2",
+      "section_title": "Section 10 — Stability and Reactivity",
+      "doc_type": "sds",
+      "text": "Section 10 — Stability and Reactivity\n\nChlorine is stable under the storage conditions described above. It is\na powerful oxidiser and reacts with a very wide range of materials.\n\nReaction with ammonia is the single most important incompatibility on a\nsite that holds both. Chlorine and ammonia react to form chloramines\nand, under some conditions, nitrogen trichloride, which is a\nshock-sensitive explosive. The reaction also generates a toxic vapour\nthat injures responders who arrived to deal with what they believed was\na single-substance leak. Never attempt to neutralise a chlorine release\nwith ammonia, or an ammonia release with chlorine or with any\nhypochlorite bleach.\n\nMixtures of chlorine and hydrogen are explosive over a wide composition\nrange and can be initiated by ordinary daylight.\n\nChlorine reacts violently with finely divided metals, with many\norganic compounds, and with turpentine and similar solvents, in several\ncases igniting them without any external ignition source. Wet chlorine\ncorrodes most common metals. Contact with water forms hydrochloric and\nhypochlorous acids.\n\nHazardous decomposition and reaction products include hydrogen\nchloride, chloramines and nitrogen trichloride.",
+      "token_estimate": 234
+    },
+    {
+      "chunk_id": "sds_sulphuric_acid.md#00",
+      "source_file": "sds_sulphuric_acid.md",
+      "substance_code": "H2SO4",
+      "section_title": "Section 2 — Hazards Identification",
+      "doc_type": "sds",
+      "text": "Section 2 — Hazards Identification\n\nConcentrated sulphuric acid is a colourless to dark brown oily liquid,\nodourless, very dense, and severely corrosive to every tissue it\ncontacts. It causes deep chemical burns to skin and permanent damage to\neyes, and ingestion causes severe injury to the mouth, throat,\noesophagus and stomach.\n\nThree separate mechanisms cause injury and they are frequently confused\nwith one another. The acid is corrosive, so it destroys tissue\nchemically. It is strongly dehydrating, so it strips water out of\norganic material, which is why contact with skin, wood or paper chars\nthem. And it releases a large amount of heat when it mixes with water,\nso a dilution that is done in the wrong order produces a thermal injury\non top of the chemical one.\n\nMist or vapour from hot acid, or generated by splashing, is corrosive\nto the respiratory tract and eyes and is a recognised carcinogen in\noccupational settings. Exposure limit is taken here as 0.2 mg/m³ as an\neight-hour time-weighted average for the mist.\n\nThe liquid is roughly 1.8 times as dense as water. A spill spreads\nfurther and carries more mass than an equivalent visible volume of\nwater would suggest, and it will find floor drains readily.\n\nSulphuric acid is not flammable, but it generates hydrogen — which is\nflammable over an extremely wide range in air and needs almost no\nignition energy — when it contacts most common metals. A contained\nacid spill in a plant room can therefore become an explosion hazard\nwithout anything having burned.",
+      "token_estimate": 340
+    },
+    {
+      "chunk_id": "sds_sulphuric_acid.md#01",
+      "source_file": "sds_sulphuric_acid.md",
+      "substance_code": "H2SO4",
+      "section_title": "Section 4 — First-Aid Measures",
+      "doc_type": "sds",
+      "text": "Section 4 — First-Aid Measures\n\nSpeed matters more than anything else that follows. The interval before\nirrigation begins governs the depth of the eventual burn.\n\nFor skin contact, immediately flush the affected area with large\nquantities of running water for at least 30 minutes, removing\ncontaminated clothing, footwear and watch straps while flushing.\nContaminated clothing holds acid against the skin and continues to\ninjure it after the visible splash has been washed away.\n\nFor eye contact, irrigate with clean water for at least 30 minutes\nholding the eyelids apart, and continue irrigating during transport to\nmedical care.\n\nDo not attempt to neutralise acid on skin or in the eye with sodium\nbicarbonate, soap solution, lime or any other alkali. Neutralisation is\nstrongly exothermic, and performing it on tissue that is already burned\nadds a thermal burn to a chemical one. Water in quantity, for a long\ntime, is the treatment.\n\nWhere dry or highly concentrated acid is present as a crust or residue,\nbrushing off the bulk material before irrigation is appropriate,\nbecause the first small volume of water contacting concentrated acid\ngenerates significant heat. Once irrigation starts, it must be with a\nlarge and continuous flow — a trickle is worse than none, because it\nsupplies enough water to react and not enough to carry the heat away.\n\nIf acid has been swallowed, do not induce vomiting, which returns the\nacid across the oesophagus a second time and risks aspiration. Do not\nattempt neutralisation in the stomach. Do not give anything by mouth to\na casualty who is drowsy or unconscious. If the casualty is fully\nconscious, small sips of water to dilute are acceptable. Obtain\nimmediate medical attention.\n\nFor inhalation of mist, move to fresh air and obtain medical attention;\ndelayed respiratory effects are possible.",
+      "token_estimate": 395
+    },
+    {
+      "chunk_id": "sds_sulphuric_acid.md#02",
+      "source_file": "sds_sulphuric_acid.md",
+      "substance_code": "H2SO4",
+      "section_title": "Section 5 — Fire-Fighting Measures",
+      "doc_type": "sds",
+      "text": "Section 5 — Fire-Fighting Measures\n\nSulphuric acid does not burn. The hazards in a fire are the hydrogen\ngenerated by acid attacking metal, the corrosive mist driven off by\nheat, and the violent reaction of the acid with any water applied to\nit.\n\nUse dry chemical, carbon dioxide or foam appropriate to the surrounding\nmaterials to fight a fire near an acid spill. Do not direct a water jet\nonto spilled concentrated acid. The heat of mixing flashes the water to\nsteam at the point of contact and ejects a spray of concentrated acid\noutward, over a considerably wider area than the original spill and\ngenerally in the direction of whoever is holding the hose.\n\nWater spray may be used to cool intact containers exposed to fire and\nto knock down acid mist, provided it is not played into the liquid\nitself. Water used in this way becomes acidic and must be contained.\n\nFire-fighters must wear self-contained breathing apparatus and full\nacid-resistant protective clothing. Structural fire kit is permeable to\nacid and is not adequate for a spill response.",
+      "token_estimate": 238
+    },
+    {
+      "chunk_id": "sds_sulphuric_acid.md#03",
+      "source_file": "sds_sulphuric_acid.md",
+      "substance_code": "H2SO4",
+      "section_title": "Section 6 — Accidental Release Measures",
+      "doc_type": "sds",
+      "text": "Section 6 — Accidental Release Measures\n\nEvacuate the immediate area, isolate it, and eliminate ignition sources\nbecause of the hydrogen hazard described in Section 2. Ventilate\nenclosed spaces if this can be done without entering them.\n\nResponders must wear acid-resistant suit, gloves, boots and full face\nprotection, with respiratory protection where mist may be present.\n\nContain the spill with dry inert material — dry sand, earth or a\nproprietary acid absorbent. Do not flush the spill to drain, and do not\nuse water to move or dilute a bulk spill.\n\nNeutralisation of a contained spill with soda ash, lime or sodium\nbicarbonate may be carried out by trained personnel, cautiously, from\nthe edge inward, adding the neutraliser slowly to the acid and never\nthe reverse. The reaction foams vigorously and releases carbon dioxide\nand heat, and adding neutraliser quickly to a large volume produces a\nboiling, spattering mass of acid. On a large spill, containment and\nprofessional removal is preferable to neutralisation.\n\nCollect neutralised residue for disposal as chemical waste. Wash the\narea only after the bulk acid has been absorbed or neutralised, and\ncheck the washings before allowing them to drain.",
+      "token_estimate": 255
+    },
+    {
+      "chunk_id": "sds_sulphuric_acid.md#04",
+      "source_file": "sds_sulphuric_acid.md",
+      "substance_code": "H2SO4",
+      "section_title": "Section 7 — Handling and Storage",
+      "doc_type": "sds",
+      "text": "Section 7 — Handling and Storage\n\nAlways add acid to water, slowly, with stirring. Never add water to\nconcentrated acid. Water added to acid floats on the denser acid and\nthe heat of mixing is released in a thin layer at the surface, which\ncan reach boiling point locally and eject acid violently out of the\nvessel. Acid added to water disperses the same heat through the whole\nvolume. This ordering is the single most important handling rule for\nthis substance and it is the one most often reversed under time\npressure.\n\nStore in a cool, dry, well-ventilated area with a bunded, acid-\nresistant floor that does not drain to a public sewer. Keep containers\nclosed and upright.\n\nSegregate from water-reactive materials, from strong bases and other\nalkalis, from metals, from chlorates, perchlorates, permanganates,\ncarbides and fulminates, and from all organic and combustible\nmaterials. Segregate by distance or barrier, not by labelling alone.\n\nUse acid-resistant transfer equipment and never pressurise a carboy to\nempty it. Provide an emergency shower and eyewash immediately adjacent\nto any point where acid is decanted, and verify by test that they\ndeliver a large and sustained flow.",
+      "token_estimate": 255
+    },
+    {
+      "chunk_id": "sds_sulphuric_acid.md#05",
+      "source_file": "sds_sulphuric_acid.md",
+      "substance_code": "H2SO4",
+      "section_title": "Section 10 — Stability and Reactivity",
+      "doc_type": "sds",
+      "text": "Section 10 — Stability and Reactivity\n\nStable under the storage conditions described above. Hygroscopic;\nabsorbs water from the air.\n\nReacts violently and exothermically with water, particularly when water\nis added to the acid rather than the reverse.\n\nAttacks most common metals, including iron, steel, aluminium and zinc,\nliberating hydrogen. Hydrogen is flammable from about 4 to 75 per cent\nin air and ignites on very little energy, so an acid spill in contact\nwith structural steel or a metal bund in a poorly ventilated space\ncreates an explosion risk that is not obvious from the substance's own\nnon-flammability.\n\nReacts violently with strong bases, releasing large amounts of heat.\n\nReacts dangerously with chlorates, perchlorates, permanganates,\ncarbides, fulminates and many organic compounds, in several cases\nigniting them. Contact with organic material chars and may ignite it.\n\nHazardous decomposition products include sulphur oxides and, on contact\nwith metals, hydrogen.",
+      "token_estimate": 194
+    }
+  ]
+}

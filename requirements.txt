@@ -3,3 +3,16 @@ uvicorn[standard]>=0.30.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 google-genai>=0.3.0
+
+# Retrieval for POST /incident. Base dependencies, not optional: an
+# incident response that is not grounded in the SDS corpus is the
+# feature failing, not a tier degrading. This differs from the language
+# semantic tier, which is genuinely optional (requirements-semantic.txt)
+# because script detection still answers correctly without it.
+#
+# sentence-transformers pulls in torch, so this is the dependency that
+# makes the install large. It embeds the corpus at ingest time and the
+# query at request time, using the same intfloat/multilingual-e5-small
+# that language.py already names -- one model for the whole project.
+faiss-cpu>=1.8.0
+sentence-transformers>=3.0.0
