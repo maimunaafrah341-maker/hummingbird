@@ -113,13 +113,19 @@ the bay while the clock runs.
 ## Bay Twin — watching it decide
 
 ```
-python bay_twin.py --demo
+python bay_twin.py --live demo-01-best-13386074.mp4
 ```
 
-A live top-down view of the floor, driven by the event stream. Red tile:
-an incident is open, with the acknowledgement window counting down on
-the tile itself. Black tile: nobody acknowledged it and the system
-escalated on its own.
+One command: it starts the incident service, opens the floor plan, and
+runs the real detector against that footage. **Nothing on the page is
+scripted or seeded** — the floor starts empty and a bay appears the
+moment it reports something. Measured on that clip: 242 routing
+decisions and 3 incidents in the first 45 seconds, every one produced
+by the real modules.
+
+A live top-down view of the floor. Red tile: an incident is open, with
+the acknowledgement window counting down on the tile itself. Black tile:
+nobody acknowledged it and the system escalated on its own.
 
 **Amber dot: a borderline detection was held, and then suppressed.**
 
@@ -128,18 +134,26 @@ every team in the room has one. An amber dot appearing, hesitating and
 fading out is this system *deciding not to cry wolf* — the part that
 took the work and the part that is otherwise invisible in a terminal.
 
-Against the real trigger, with the incident service already running:
+Live footage produces several decisions a second, so the trail has a
+**Key / All** toggle. Key hides the routine holds and reconfirmations;
+the counters count everything either way.
+
+Two other ways in. `python bay_twin.py --demo` runs a scripted stream
+with no camera and no model — the version that cannot fail on stage.
+And if the service is already up, point the trigger at it by hand:
 
 ```
-python yolo_trigger.py camera --zone BAY-3 --api http://127.0.0.1:8001     --twin http://127.0.0.1:8001 --source demo-01-best-13386074.mp4
+python yolo_trigger.py camera --zone BAY-3 --api http://127.0.0.1:8001 \
+    --twin http://127.0.0.1:8001 --source demo-01-best-13386074.mp4
 ```
 
 Then open <http://127.0.0.1:8001/twin>. The `--twin` flag is telemetry
 only: the emitter is fire-and-forget on its own thread with a bounded
 queue that **drops rather than waits**, and it swallows every error. A
 twin that is not running, a browser that stops reading, a network that
-drops — none of them can slow down or fail a detection. If the dashboard
-breaks, the system keeps working and simply is not being watched.
+drops — none of them can slow down or fail a detection. If the
+dashboard breaks, the system keeps working and simply is not being
+watched.
 
 ---
 
