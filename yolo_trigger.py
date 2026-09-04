@@ -15,11 +15,13 @@ the thing it replaces is not a fallback, it is a second bug surface.
 **A detector is not a trigger.** YOLO re-decides the world 30 times a
 second, so wiring detections straight to POSTs sends 30 incidents a
 second for one person who forgot a hardhat. Two independent gates sit
-in between: a violation must hold for N consecutive frames before it
-counts (kills single-frame flicker), and once fired, that same
-violation in that same zone is muted for a cooldown window (kills the
-"still not wearing it" storm). Both live in TriggerGate, which has no
-camera and no HTTP in it and is therefore testable on its own.
+in between: a violation must appear in at least 3 of the last 8 frames
+before it counts (kills stray single-frame detections), and once fired,
+that same violation in that same zone is muted for a cooldown window
+(kills the "still not wearing it" storm). Both live in TriggerGate,
+which has no camera and no HTTP in it and is therefore testable on its
+own. The 3-of-8 shape is set by the detector's measured recall, not
+picked -- see EVAL-ACCURACY.md and the note on HITS_REQUIRED.
 
 Run it:
 
@@ -38,6 +40,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 
 
@@ -60,10 +63,24 @@ API_KEY = os.getenv("API_KEY") or None
 # for the same event; too long and a genuinely new event gets swallowed.
 COOLDOWN_SECONDS = float(os.getenv("HAZARDWATCH_COOLDOWN", "45"))
 
-# Consecutive frames a violation must survive before it counts. At ~30
-# fps this is a sixth of a second of agreement -- long enough to kill
-# single-frame flicker, short enough that nobody perceives a delay.
-CONSECUTIVE_FRAMES = int(os.getenv("HAZARDWATCH_FRAMES", "5"))
+# How many of the last WINDOW_FRAMES frames must show the violation
+# before it counts.
+#
+# This was "5 consecutive frames" until the detector was measured. On
+# the Roboflow test split this model's per-frame recall on NO-Hardhat is
+# 0.477 -- it sees under half the frames a violation is actually in. A
+# five-in-a-row requirement multiplies that miss rate five times over
+# and the trigger effectively stops working: ~2.5% of windows fire,
+# against ~82% for 3-of-8 at the same recall. See EVAL-ACCURACY.md.
+#
+# The trade is real and goes the other way too: 3-of-8 will also fire on
+# three spurious detections inside half a second, where five-in-a-row
+# would not. Two things make that acceptable -- violation-class
+# precision is 0.827, so false detections are not common, and the
+# cooldown below caps what any one of them costs. For a hazard system a
+# missed violation is worse than a false alarm.
+HITS_REQUIRED = int(os.getenv("HAZARDWATCH_HITS", "3"))
+WINDOW_FRAMES = int(os.getenv("HAZARDWATCH_WINDOW", "8"))
 
 # Below this the box is a guess, not a detection. Raise it if the demo
 # room produces false hardhat-misses; lower it if real ones are missed.
@@ -108,22 +125,35 @@ class TriggerGate:
 
     Two independent gates, both of which must pass:
 
-      1. Confirmation. The (zone, violation) pair must be seen on
-         CONSECUTIVE_FRAMES frames in a row. Any frame that does not
-         see it resets that pair's streak to zero.
+      1. Confirmation. The (zone, violation) pair must appear in at
+         least `hits` of the last `window` frames.
       2. Cooldown. Having fired, the pair is muted for `cooldown`
          seconds.
+
+    Confirmation is a sliding window rather than a consecutive streak,
+    and that is a measured decision, not a preference. A streak requires
+    the detector to be right N times in a row; this detector is right
+    about half the time per frame (EVAL-ACCURACY.md), so a streak of 5
+    fires on ~2.5% of windows where a violation is genuinely present.
+    The same 5 frames of evidence, counted as 3-of-8, fires on ~82%.
+
+    A window still rejects what a streak was there to reject -- one or
+    two stray frames -- while surviving the misses the model actually
+    makes. What it will not distinguish is a sustained 50% flicker from
+    a real violation the model half-sees, because at this recall those
+    two look identical. That is a known limit, not an oversight.
 
     Time is injected rather than read from the clock so the cooldown can
     be tested without a test that sleeps for 45 seconds.
     """
 
-    def __init__(self, cooldown=COOLDOWN_SECONDS, frames=CONSECUTIVE_FRAMES,
-                 clock=time.monotonic):
+    def __init__(self, cooldown=COOLDOWN_SECONDS, hits=HITS_REQUIRED,
+                 window=WINDOW_FRAMES, clock=time.monotonic):
         self.cooldown = cooldown
-        self.frames = max(1, frames)
+        self.hits = max(1, hits)
+        self.window = max(self.hits, window)
         self.clock = clock
-        self._streak = {}    # (zone, violation) -> consecutive frames seen
+        self._seen = {}      # (zone, violation) -> deque of per-frame bools
         self._fired_at = {}  # (zone, violation) -> clock time of last fire
 
     def observe(self, zone, violations):
@@ -132,20 +162,33 @@ class TriggerGate:
         should fire right now.
 
         `violations` is the set of violation labels visible in this
-        frame. Pairs absent from it have their streak reset, which is
-        why this takes a whole frame rather than one violation at a
-        time -- "not seen this frame" is information.
+        frame. Every pair this zone has ever seen gets a False appended
+        when it is absent, which is why this takes a whole frame rather
+        than one violation at a time -- "not seen this frame" is
+        information, and it is what ages a stale detection out.
         """
 
         violations = set(violations)
         now = self.clock()
         ready = []
 
+        # Record this frame for every pair we are tracking in this zone,
+        # present or not.
+        tracked = {key for key in self._seen if key[0] == zone}
+        tracked |= {(zone, violation) for violation in violations}
+
+        for key in tracked:
+            window = self._seen.get(key)
+
+            if window is None:
+                window = self._seen[key] = deque(maxlen=self.window)
+
+            window.append(key[1] in violations)
+
         for violation in sorted(violations):
             key = (zone, violation)
-            self._streak[key] = self._streak.get(key, 0) + 1
 
-            if self._streak[key] < self.frames:
+            if sum(self._seen[key]) < self.hits:
                 continue
 
             last = self._fired_at.get(key)
@@ -155,13 +198,6 @@ class TriggerGate:
 
             self._fired_at[key] = now
             ready.append(violation)
-
-        # Anything not seen this frame loses its streak. Without this a
-        # violation that flickers on for one frame every second would
-        # accumulate a streak and eventually fire.
-        for key in list(self._streak):
-            if key[0] == zone and key[1] not in violations:
-                self._streak[key] = 0
 
         return ready
 
@@ -470,8 +506,8 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
     gate = gate or TriggerGate()
 
     log("watching zone=%s on source %r -- Ctrl-C to stop" % (zone, source_index))
-    log("gate: %d consecutive frames, %.0fs cooldown, conf>=%.2f"
-        % (gate.frames, gate.cooldown, CONFIDENCE_FLOOR))
+    log("gate: %d of last %d frames, %.0fs cooldown, conf>=%.2f"
+        % (gate.hits, gate.window, gate.cooldown, CONFIDENCE_FLOOR))
 
     blank_frames = 0
     fired_total = 0
@@ -683,12 +719,13 @@ def doctor(zone="BAY-3", source="0", api=None, language="en", frames=20):
                    ", ".join("%s %.2f" % (k, v) for k, v in sorted(seen.items()))
                    or "nothing above conf %.2f" % CONFIDENCE_FLOOR,
                    None if seen else
-                   "stand in frame; the gate needs %d consecutive frames to fire"
-                   % CONSECUTIVE_FRAMES)
+                   "stand in frame; the gate needs %d of %d frames to fire"
+                   % (HITS_REQUIRED, WINDOW_FRAMES))
 
-            confirm_seconds = CONSECUTIVE_FRAMES / infer_fps
-            record("PASS", "time to fire", "%.1f s (%d frames at %.1f fps)"
-                   % (confirm_seconds, CONSECUTIVE_FRAMES, infer_fps))
+            confirm_seconds = HITS_REQUIRED / infer_fps
+            record("PASS", "time to fire",
+                   "%.1f s at best (%d hits at %.1f fps; longer if frames are missed)"
+                   % (confirm_seconds, HITS_REQUIRED, infer_fps))
 
         except Exception as e:
             record("FAIL", "inference", "%s: %s" % (type(e).__name__, str(e)[:90]))
@@ -756,33 +793,28 @@ def selftest():
     """Exercise TriggerGate against a fake clock. No camera, no network."""
 
     now = [1000.0]
-    gate = TriggerGate(cooldown=45, frames=3, clock=lambda: now[0])
+    gate = TriggerGate(cooldown=45, hits=3, window=8, clock=lambda: now[0])
     checks = []
 
     def check(name, condition, detail=""):
         checks.append(bool(condition))
-        print("  %s  %-38s %s" % ("PASS" if condition else "FAIL", name, detail))
+        print("  %s  %-40s %s" % ("PASS" if condition else "FAIL", name, detail))
 
-    def over(frames, zone, violations):
-        """Every fire across `frames` identical frames, flattened.
-
-        Which frame within the window a fire lands on depends on whether
-        that pair already had a streak, so the assertions below are about
-        what fired across the window, not about one frame's return value.
-        """
+    def over(count, zone, violations):
+        """Every fire across `count` identical frames, flattened."""
 
         fired = []
 
-        for _ in range(frames):
+        for _ in range(count):
             fired += gate.observe(zone, violations)
 
         return fired
 
     first_two = [gate.observe("BAY-3", ["NO-Hardhat"]) for _ in range(2)]
-    check("2 frames is not enough", first_two == [[], []], str(first_two))
+    check("2 hits is not enough", first_two == [[], []], str(first_two))
 
     third = gate.observe("BAY-3", ["NO-Hardhat"])
-    check("3rd consecutive frame fires", third == ["NO-Hardhat"], str(third))
+    check("3rd hit fires", third == ["NO-Hardhat"], str(third))
 
     now[0] += 1
     during = [gate.observe("BAY-3", ["NO-Hardhat"]) for _ in range(30)]
@@ -795,23 +827,62 @@ def selftest():
     both = over(3, "BAY-3", ["NO-Hardhat", "NO-Safety Vest"])
     check("cooldown is per-violation", both == ["NO-Safety Vest"], str(both))
 
-    # A violation that never stopped has a saturated streak, so it is
-    # free to fire on the very first frame past the mute window -- there
-    # is nothing left to re-confirm.
     now[0] += 46
     again = over(3, "BAY-3", ["NO-Hardhat"])
     check("fires again after cooldown", again == ["NO-Hardhat"], str(again))
     check("and fires exactly once", len(again) == 1, "%d fires in 3 frames" % len(again))
 
-    flicker_gate = TriggerGate(cooldown=45, frames=3, clock=lambda: now[0])
+    # -- what the window buys, and what it costs ---------------------
+    # This is the whole reason for the 3-of-8 shape: the detector misses
+    # about half the frames a violation is genuinely in, so a gate that
+    # cannot tolerate a miss cannot fire on this model at all.
+    patchy = TriggerGate(cooldown=45, hits=3, window=8, clock=lambda: now[0])
+    fired = []
+
+    for present in (True, False, True, False, True):
+        fired += patchy.observe("BAY-1", ["NO-Hardhat"] if present else [])
+
+    check("fires through missed frames", fired == ["NO-Hardhat"],
+          "seen/missed/seen/missed/seen -> %s" % (fired or "nothing"))
+
+    lonely = TriggerGate(cooldown=45, hits=3, window=8, clock=lambda: now[0])
+    strays = []
+
+    strays += lonely.observe("BAY-2", ["NO-Mask"])           # one stray frame
+
+    for _ in range(8):
+        strays += lonely.observe("BAY-2", [])
+
+    check("one stray frame never fires", strays == [],
+          "%d fires" % len(strays))
+
+    pair = TriggerGate(cooldown=45, hits=3, window=8, clock=lambda: now[0])
+    strays = []
+
+    for _ in range(2):
+        strays += pair.observe("BAY-2", ["NO-Mask"])
+
+    for _ in range(8):
+        strays += pair.observe("BAY-2", [])
+
+    check("two strays never fire", strays == [], "%d fires" % len(strays))
+
+    # The honest cost of the trade, asserted rather than hidden: a
+    # sustained 50% flicker DOES fire now, where a consecutive-streak
+    # gate would have rejected it. At this detector's recall a real
+    # half-seen violation and a flickering false positive are the same
+    # signal, so the gate cannot tell them apart -- and for a hazard
+    # system, firing is the safer side to err on.
+    flicker_gate = TriggerGate(cooldown=45, hits=3, window=8, clock=lambda: now[0])
     flickers = []
 
     for _ in range(10):
         flickers += flicker_gate.observe("BAY-9", ["NO-Mask"])
-        flickers += flicker_gate.observe("BAY-9", [])      # gone this frame
+        flickers += flicker_gate.observe("BAY-9", [])
 
-    check("flicker never accumulates", flickers == [],
-          "%d fires in 20 alternating frames" % len(flickers))
+    check("sustained flicker fires (known trade)", len(flickers) == 1,
+          "%d fire in 20 alternating frames -- cooldown caps the rest"
+          % len(flickers))
 
     print("\n%d/%d gate checks passed" % (sum(checks), len(checks)))
     return 0 if all(checks) else 1
@@ -842,7 +913,10 @@ def main(argv=None):
                              "against instead -- useful when the lens is covered")
     camera.add_argument("--show", action="store_true", help="open a preview window")
     camera.add_argument("--cooldown", type=float, default=COOLDOWN_SECONDS)
-    camera.add_argument("--frames", type=int, default=CONSECUTIVE_FRAMES)
+    camera.add_argument("--hits", type=int, default=HITS_REQUIRED,
+                        help="frames showing the violation needed to fire")
+    camera.add_argument("--window", type=int, default=WINDOW_FRAMES,
+                        help="how many recent frames those hits are counted over")
     camera.add_argument("--max-frames", type=int, default=None,
                         help="stop after N frames (a still image is otherwise endless)")
 
@@ -889,7 +963,7 @@ def main(argv=None):
     run_camera(
         args.zone, source_index=args.source, base=args.api, key=args.key,
         substance=args.substance, language=args.language, show=args.show,
-        gate=TriggerGate(cooldown=args.cooldown, frames=args.frames),
+        gate=TriggerGate(cooldown=args.cooldown, hits=args.hits, window=args.window),
         downstream=not args.no_downstream, max_frames=args.max_frames,
     )
     return 0

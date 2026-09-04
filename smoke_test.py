@@ -211,14 +211,18 @@ def run_incident_rehearsal(argv):
     # The gate must turn that into exactly one incident.
     print("1. detection")
 
-    gate = yolo_trigger.TriggerGate(cooldown=45, frames=5)
+    gate = yolo_trigger.TriggerGate(cooldown=45, hits=3, window=8)
     fires = []
 
-    for _ in range(30):
-        fires += gate.observe(zone, ["NO-Hardhat"])
+    # Every third frame is a miss, because the detector misses about
+    # half of them in reality (EVAL-ACCURACY.md). A rehearsal that feeds
+    # 30 perfect frames tests a detector this project does not have.
+    for index in range(30):
+        seen = [] if index % 3 == 2 else ["NO-Hardhat"]
+        fires += gate.observe(zone, seen)
 
     check("gate fires once per event", len(fires) == 1,
-          "30 frames of NO-Hardhat -> %d incident(s)" % len(fires))
+          "30 frames (1 in 3 missed) -> %d incident(s)" % len(fires))
     check("gate mutes the repeat", gate.remaining_mute(zone, "NO-Hardhat") > 40,
           "%.0fs of cooldown left" % gate.remaining_mute(zone, "NO-Hardhat"))
 

@@ -193,7 +193,7 @@ def measure_gate():
     import yolo_trigger as yt
 
     now = [0.0]
-    gate = yt.TriggerGate(cooldown=45, frames=5, clock=lambda: now[0])
+    gate = yt.TriggerGate(cooldown=45, hits=3, window=8, clock=lambda: now[0])
 
     frames = 1800          # 60 seconds at 30 fps
     fires = 0
@@ -254,7 +254,7 @@ violations = yt._violation_classes(model)
 # inference, unpacking the boxes and the gate decision. This is the
 # number that describes the autonomous path; inference alone flatters
 # it by leaving out everything around the model.
-gate = yt.TriggerGate(cooldown=45, frames=5)
+gate = yt.TriggerGate(cooldown=45, hits=3, window=8)
 loop_runs = 15
 t = time.perf_counter()
 for frame_in in yt.frames_from(image_path, max_frames=loop_runs):
@@ -347,7 +347,7 @@ capture_seconds = (time.perf_counter() - t) / FRAMES
 
 model, label = yt.load_model()
 violations = yt._violation_classes(model)
-gate = yt.TriggerGate(cooldown=45, frames=5)
+gate = yt.TriggerGate(cooldown=45, hits=3, window=8)
 
 model(frame, verbose=False, conf=yt.CONFIDENCE_FLOOR)     # warm-up
 
@@ -487,6 +487,8 @@ def _row(label, value):
 
 
 def write_report(rows, imports, gate, model, camera, outputs, path=REPORT):
+    import yolo_trigger as yt      # for the gate constants the prose quotes
+
     """Write EVAL-TRIGGER.md. Same form and same rules as EVAL.md."""
 
     stamp = datetime.now().strftime("%Y-%m-%d")
@@ -636,8 +638,9 @@ def write_report(rows, imports, gate, model, camera, outputs, path=REPORT):
         add("")
         slower = min(model["loop_fps"], model["fps"])
 
-        add("At **%.1f fps** the 5-frame confirmation costs **%.1f s** before a"
-            % (slower, 5.0 / slower))
+        add("At **%.1f fps** the %d-of-%d confirmation costs **%.1f s** at best"
+            % (slower, yt.HITS_REQUIRED, yt.WINDOW_FRAMES, yt.HITS_REQUIRED / slower))
+        add("-- longer whenever the detector misses a frame -- before a")
         add("violation fires — the latency of the autonomous path, set by CPU")
         add("inference rather than by the gate.")
         add("")
@@ -670,8 +673,8 @@ def write_report(rows, imports, gate, model, camera, outputs, path=REPORT):
         add(_row("Full live path — capture, infer, gate",
                  "**%.0f ms  (%.1f fps)**"
                  % (camera["loop_seconds"] * 1000, camera["loop_fps"])))
-        add(_row("Time to fire (%d frames)" % 5,
-                 "**%.1f s**" % (5.0 / camera["loop_fps"])))
+        add(_row("Time to fire (%d hits of %d)" % (yt.HITS_REQUIRED, yt.WINDOW_FRAMES),
+                 "**%.1f s** at best" % (yt.HITS_REQUIRED / camera["loop_fps"])))
         add("")
 
         if camera["detections"]:
