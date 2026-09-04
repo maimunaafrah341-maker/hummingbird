@@ -464,6 +464,63 @@ def incident(request, x_api_key=None):
     return response
 
 
+def shift_brief(request):
+    """
+    A plain-language handover note for the shift log, written on demand.
+
+    **This is the only place a language model is called, and a person
+    has to press a button to get here.** That is deliberate on two
+    counts.
+
+    Licensing: Featherless sells Chat plans for human-driven interactive
+    use and Developer plans for API-driven automation. Calling a model on
+    every detection is automation; generating a note because an operator
+    asked for one is a person using a tool. This endpoint is the second
+    thing.
+
+    Safety: the autonomous path -- severity, response steps, the
+    contraindication -- stays deterministic and never reaches a model.
+    A brief is a summary written after the fact for a human to read. If
+    it fails, nothing about the incident response changes; you just do
+    not get the note.
+    """
+
+    incident_type = request.incident_type or "hazard"
+    bay = request.bay_id or "the bay"
+    substance = request.substance_name or request.substance_code
+
+    assessment = assess(incident_type, bay, request.substance_code,
+                        request.substance_name)
+
+    prompt = (
+        "Write a short shift-handover note for a plant safety log about "
+        "the incident below. Four sentences at most, plain English, past "
+        "tense, factual. State what happened, what was done, and what the "
+        "next shift should watch for. Do not invent details that are not "
+        "listed. Do not add a heading or any preamble.\n\n"
+        "Bay: %s\nHazard: %s\nSubstance: %s\nSeverity: %s\n"
+        "Actions taken:\n%s\nHazard to avoid: %s"
+        % (bay, incident_type, substance or "none recorded",
+           assessment["severity"], "\n".join("- " + s for s in assessment["steps"]),
+           assessment.get("contraindication") or "none recorded"))
+
+    import llm
+
+    text = llm.generate_response(prompt)
+
+    return {
+        "brief": text.strip(),
+        "incident": {
+            "bay_id": bay,
+            "incident_type": incident_type,
+            "severity": assessment["severity"],
+        },
+        "generated_by": "featherless" if os.getenv("FEATHERLESS_API_KEY") else "fallback provider",
+        "note": "Operator-requested summary. The incident response itself "
+                "is produced deterministically and was not generated.",
+    }
+
+
 if WEB_AVAILABLE:
     # Routes are declared here, not as decorators on the functions
     # above, so this module imports -- and --selftest runs -- on a
@@ -482,6 +539,26 @@ if WEB_AVAILABLE:
     def incident_route(request: IncidentRequest,
                        x_api_key: str = Header(default=None)):
         return incident(request, x_api_key)
+
+    @app.post("/incident/brief")
+    def brief_route(request: IncidentRequest,
+                    x_api_key: str = Header(default=None)):
+        _check_key(x_api_key)
+
+        try:
+            return shift_brief(request)
+
+        except Exception as e:
+            # 503, not 500: the incident response is unaffected and the
+            # caller can simply try again or do without. Naming the
+            # provider matters here -- a 429 from a Chat-tier key means
+            # the plan refuses automated traffic, which is a different
+            # fix from being out of credit.
+            raise HTTPException(
+                status_code=503,
+                detail="brief unavailable (%s: %s). The incident response "
+                       "is unaffected -- it is generated deterministically."
+                       % (type(e).__name__, str(e)[:160]))
 
 
 # ============================================================

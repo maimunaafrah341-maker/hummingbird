@@ -88,6 +88,40 @@ OPENROUTER_MODELS = [
     "nvidia/nemotron-3-ultra-550b-a55b:free",
 ]
 
+# Featherless. OpenAI-compatible chat-completions, so it goes through
+# the same _call_openai_compatible_api as Groq and OpenRouter.
+#
+# Tried FIRST when its key is set, because it is the provider this
+# project is required to use -- the others stay behind it as failover so
+# a throttle or an outage still leaves something answering.
+#
+# **Read this before pointing automated traffic at it.** Featherless
+# sells two different things. The Chat/Premium plans are licensed for
+# human-driven interactive use and exclude automation; the Developer
+# plans are the credit-based, API-driven ones. A server calling this on
+# every incident is automation by definition. So the one call this
+# project makes is operator-initiated -- see /incident/brief in
+# incident_api.py -- and the autonomous safety path never touches it.
+# That is a licensing decision, not a performance one.
+#
+# A new account gets 100,000 trial tokens, which at roughly 600 tokens
+# a brief is over 150 presses of the button.
+FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY")
+FEATHERLESS_BASE_URL = os.getenv(
+    "FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1")
+
+# Several, tried in order, for the same reason OPENROUTER_MODELS is a
+# list: which models a key can reach depends on the plan tier, so a
+# single hardcoded name turns a tier difference into a hard failure.
+FEATHERLESS_MODELS = [
+    m.strip() for m in os.getenv(
+        "FEATHERLESS_MODELS",
+        "mistralai/Mistral-7B-Instruct-v0.3,"
+        "Qwen/Qwen2.5-7B-Instruct,"
+        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    ).split(",") if m.strip()
+]
+
 
 def _call_openai_compatible_api(base_url, api_key, model, prompt, timeout=30):
     """
@@ -173,6 +207,28 @@ def generate_response(prompt):
 
     last_error = None
 
+    if FEATHERLESS_API_KEY:
+
+        for model in FEATHERLESS_MODELS:
+
+            try:
+                return _call_openai_compatible_api(
+                    FEATHERLESS_BASE_URL,
+                    FEATHERLESS_API_KEY,
+                    model,
+                    prompt,
+                )
+
+            except Exception as e:
+                last_error = e
+                # A 429 here is worth reading rather than retrying past.
+                # On a Chat/Premium plan it is not "too fast", it is the
+                # plan refusing automated traffic it is not licensed for
+                # -- a bigger Chat tier will not fix it, a Developer plan
+                # or fewer, human-initiated calls will.
+                print(f"[Featherless] {model} failed: {type(e).__name__}: {e}")
+                continue
+
     if GROQ_API_KEY:
 
         try:
@@ -237,8 +293,9 @@ def generate_response(prompt):
     # be seen and the one that most needs to say what to do.
     if last_error is None:
         last_error = RuntimeError(
-            "no LLM provider is configured -- set GROQ_API_KEY, "
-            "GEMINI_API_KEY or OPENROUTER_API_KEY in .env (see env.example)")
+            "no LLM provider is configured -- set FEATHERLESS_API_KEY "
+            "(tried first), or GROQ_API_KEY / GEMINI_API_KEY / "
+            "OPENROUTER_API_KEY in .env (see env.example)")
 
     print("\n" + "=" * 70)
     print("RESPONSE GENERATION ERROR (Groq, Gemini, and OpenRouter all failed)")
