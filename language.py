@@ -152,6 +152,32 @@ def warm_up():
     return model is not None
 
 
+def get_embedding_model():
+    """
+    The loaded embedding model, or None if it cannot load on this host.
+
+    Exists so other modules can embed text with the model this project
+    already downloads, without reaching into _ensure_model(). The
+    incident retriever needs exactly this: its FAISS index was built
+    with MODEL_NAME, so its queries have to be encoded by the same
+    model, and a second copy would mean a second few hundred megabytes
+    for no benefit.
+
+    Returns the model alone, not the (model, anchors) pair
+    _ensure_model() uses internally. The per-language anchors are an
+    implementation detail of detection and mean nothing to a caller
+    doing retrieval; handing them out would make them part of this
+    module's public surface by accident.
+
+    None is a supported answer, not an error -- see _ensure_model().
+    Callers must degrade rather than assume.
+    """
+
+    model, _ = _ensure_model()
+
+    return model
+
+
 # ==========================================================
 # SUPPORTED LANGUAGES
 # ==========================================================

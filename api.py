@@ -21,10 +21,12 @@ import os
 import time
 import uuid
 
+import requests
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+import incident
 import language
 import translation
 
@@ -39,6 +41,13 @@ import translation
 # would return a language detected from half the input while reporting
 # success.
 MAX_TEXT_CHARS = 5000
+
+# /incident's fields are identifiers and short labels, not prose: a bay
+# name, a substance code, a few words describing what happened. The
+# 5000-character limit above would be meaningless here -- these go into
+# a prompt, and a caller who can put 5000 characters into
+# incident_type can rewrite the instruction the model is following.
+MAX_FIELD_CHARS = 200
 
 # Optional shared-secret gate. Unset (the default) means the API is
 # open, which is correct for a public demo. Set it and every endpoint
@@ -150,6 +159,28 @@ def validate_text(text):
     return text
 
 
+def validate_field(value, name, max_chars=MAX_FIELD_CHARS):
+    """
+    Input guard for /incident's short string fields. Same contract as
+    validate_text(): returns the cleaned value, or raises the 400 that
+    says exactly what was wrong.
+
+    Returns the stripped value, because these are compared and
+    embedded downstream and " CL2 " and "CL2" are the same substance.
+    """
+
+    if not value or not value.strip():
+        raise HTTPException(status_code=400, detail=f"{name} must not be empty")
+
+    if len(value) > max_chars:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} exceeds {max_chars} characters (got {len(value)})",
+        )
+
+    return value.strip()
+
+
 # ============================================================
 # SCHEMAS
 # ============================================================
@@ -179,6 +210,24 @@ class TranslateResponse(BaseModel):
     translation: str | None
     translated: bool
     reason: str | None
+    latency_ms: float
+
+
+class IncidentRequest(BaseModel):
+    bay_id: str = Field(..., description="Where the incident is, e.g. 'BAY-04'.")
+    substance_code: str = Field(..., description="Substance involved, e.g. 'CL2'.")
+    incident_type: str = Field(..., description="What happened, e.g. 'gas leak'.")
+    target_lang: str = Field(..., description="Language for the spoken alert.")
+
+
+class IncidentResponse(BaseModel):
+    severity: str
+    steps: list[str]
+    contraindication: str
+    spoken_alert: str
+    spoken_alert_translated: bool
+    grounded: bool
+    retrieved_sources: list[str]
     latency_ms: float
 
 
@@ -306,4 +355,92 @@ def translate(body: TranslateRequest, x_api_key: str | None = Header(None)):
         translated=False,
         reason="already_in_target_language" if same_language else "translation_unavailable",
         latency_ms=elapsed_ms,
+    )
+
+
+@app.post("/incident", response_model=IncidentResponse)
+def incident_response(body: IncidentRequest, x_api_key: str | None = Header(None)):
+    """
+    Assess a hazard and return the response to carry out.
+
+    Retrieval degrades but generation does not. A missing corpus still
+    produces an answer, marked grounded=false so the caller knows it
+    was not sourced from the site's documents; a missing model produces
+    an error, because there is nothing truthful to return.
+
+    A 502 here means the model answered in a shape this endpoint will
+    not vouch for -- most often a severity outside the enum. That is
+    deliberately not repaired into the nearest valid value: guessing
+    what an unusable hazard rating was supposed to mean is the failure
+    this endpoint is built to avoid.
+    """
+
+    require_key(x_api_key)
+
+    bay_id = validate_field(body.bay_id, "bay_id")
+    substance_code = validate_field(body.substance_code, "substance_code")
+    incident_type = validate_field(body.incident_type, "incident_type")
+    target_lang = validate_field(body.target_lang, "target_lang")
+
+    # Checked against the module's own list rather than a copy kept
+    # here, so adding a language in one place adds it everywhere.
+    if target_lang.lower() not in language.SUPPORTED_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail="target_lang must be one of: %s"
+            % ", ".join(sorted(language.SUPPORTED_LANGUAGES)),
+        )
+
+    started = time.time()
+
+    try:
+        result = incident.assess(
+            bay_id,
+            substance_code,
+            incident_type,
+            target_lang.lower(),
+        )
+
+    except RuntimeError as e:
+        # No provider configured. A deployment problem, not a caller
+        # problem, and the message says which key is missing.
+        log.error("incident: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+
+    except requests.RequestException as e:
+        # Timeout, connection failure, rate limit, upstream 5xx. All
+        # retryable, and all distinct from the model answering badly.
+        #
+        # The upstream status is put in the detail rather than dropped.
+        # "provider unreachable (HTTPError)" and "provider returned
+        # 429" send a caller to completely different places -- the
+        # first reads as an outage to wait out, the second as a quota
+        # to slow down against -- and the difference is already in the
+        # exception. Discarding it costs whoever is debugging the
+        # kiosk an hour for nothing.
+        upstream = getattr(getattr(e, "response", None), "status_code", None)
+
+        log.error(
+            "incident: provider unreachable: %s: %s", type(e).__name__, e
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "structured generation provider returned %d" % upstream
+                if upstream
+                else "structured generation provider unreachable (%s)"
+                % type(e).__name__
+            ),
+        )
+
+    except ValueError as e:
+        # The model replied, and what it said cannot be used -- invalid
+        # JSON twice over, or a shape that failed validation.
+        log.error("incident: unusable model response: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return IncidentResponse(
+        latency_ms=round((time.time() - started) * 1000, 2),
+        **result,
     )
