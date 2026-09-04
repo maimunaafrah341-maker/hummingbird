@@ -36,6 +36,8 @@ into the prose one.
 import json
 import os
 import re
+import threading
+import time
 
 import requests
 from dotenv import load_dotenv
@@ -303,6 +305,91 @@ FEATHERLESS_TIMEOUT = 60
 # retry prompt larger than its own context budget.
 CORRECTION_ECHO_CHARS = 2000
 
+# Hard ceiling on the whole function -- both attempts together, not
+# each. FEATHERLESS_TIMEOUT above does NOT bound this: requests'
+# timeout limits how long a connection may go silent, not how long a
+# request may take, so a provider that keeps trickling bytes never
+# trips it. Measured 2026-09-04 on the 60s setting: one request ran 221
+# seconds and failed, and an identical one succeeded at 242 seconds,
+# while the median was under 25. A dispatcher that might take four
+# minutes to answer is not a dispatcher.
+FEATHERLESS_DEADLINE = 90
+
+# Do not start a correction retry that cannot finish inside what is
+# left of the budget. Beginning a call whose result nobody will wait
+# for spends the provider's token quota to produce nothing -- and on
+# this account, spending quota is what makes the NEXT request fail.
+MIN_RETRY_SECONDS = 15
+
+
+class StructuredGenerationTimeout(requests.exceptions.Timeout):
+    """
+    The budget above was exhausted.
+
+    Subclasses requests.exceptions.Timeout so that callers already
+    handling transport failures catch it without knowing this class
+    exists -- api.py maps it to a 503 through its existing
+    RequestException branch, which is the right answer: the provider
+    did not respond in time. A bare TimeoutError would match none of
+    those handlers and surface as a 500, blaming the service for the
+    provider being slow.
+    """
+
+
+def _call_with_deadline(seconds, function, *args, **kwargs):
+    """
+    Run `function` in a worker thread and give up waiting after
+    `seconds`.
+
+    This bounds how long the CALLER waits. It does not cancel the
+    work: Python cannot interrupt a thread blocked in a socket read,
+    so the abandoned request keeps running until the provider answers
+    or FEATHERLESS_TIMEOUT fires, and it still spends the account's
+    token budget on the way. That is a real cost and it is the reason
+    MIN_RETRY_SECONDS exists -- what this buys is a predictable
+    failure for whoever is waiting, not a lighter load on the
+    provider.
+
+    The thread is a daemon so that a hung provider can never keep the
+    process from exiting.
+
+    Any exception raised inside the worker is re-raised here, so every
+    existing error path -- RuntimeError, HTTPError, JSONDecodeError --
+    reaches the caller exactly as it would without the watchdog.
+    """
+
+    holder = {}
+
+    def worker():
+
+        try:
+            holder["value"] = function(*args, **kwargs)
+
+        except Exception as e:
+            holder["error"] = e
+
+    thread = threading.Thread(target=worker, daemon=True)
+
+    thread.start()
+    thread.join(seconds)
+
+    if thread.is_alive():
+        raise StructuredGenerationTimeout(
+            "%s did not respond within %.0fs (the request is still running "
+            "and will still consume quota)" % (FEATHERLESS_MODEL, seconds)
+        )
+
+    if "error" in holder:
+        raise holder["error"]
+
+    return holder["value"]
+
+
+def _remaining(deadline):
+    """Seconds left before `deadline`, never negative."""
+
+    return max(0.0, deadline - time.monotonic())
+
 
 def _extract_json(text):
     """
@@ -393,7 +480,14 @@ def generate_structured_response(prompt):
             "unavailable."
         )
 
-    raw = _call_openai_compatible_api(
+    # One budget for both attempts, so a slow first call shortens the
+    # retry rather than doubling the worst case. Monotonic because a
+    # clock adjustment mid-request must not extend or collapse it.
+    deadline = time.monotonic() + FEATHERLESS_DEADLINE
+
+    raw = _call_with_deadline(
+        _remaining(deadline),
+        _call_openai_compatible_api,
         FEATHERLESS_BASE_URL,
         FEATHERLESS_API_KEY,
         FEATHERLESS_MODEL,
@@ -411,6 +505,15 @@ def generate_structured_response(prompt):
             flush=True,
         )
 
+    remaining = _remaining(deadline)
+
+    if remaining < MIN_RETRY_SECONDS:
+        raise ValueError(
+            "%s did not return valid JSON, and only %.0fs of the %ds budget "
+            "remained -- too little to retry"
+            % (FEATHERLESS_MODEL, remaining, FEATHERLESS_DEADLINE)
+        )
+
     corrected = (
         "%s\n\n"
         "---\n\n"
@@ -424,7 +527,9 @@ def generate_structured_response(prompt):
         % (prompt, raw[:CORRECTION_ECHO_CHARS])
     )
 
-    retried = _call_openai_compatible_api(
+    retried = _call_with_deadline(
+        remaining,
+        _call_openai_compatible_api,
         FEATHERLESS_BASE_URL,
         FEATHERLESS_API_KEY,
         FEATHERLESS_MODEL,
