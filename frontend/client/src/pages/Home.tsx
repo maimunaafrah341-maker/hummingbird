@@ -23,6 +23,7 @@ import {
   RotateCcw,
   ShieldAlert,
   Siren,
+  Sparkles,
   Thermometer,
   Video,
   VideoOff,
@@ -476,7 +477,211 @@ function ReviewView({ response, context, onConfirm, onCancel, fromFallback }: {
   );
 }
 
+type CopilotEntry = {
+  id: number;
+  question: string;
+  answer: string;
+  provider: string;
+  shared: Record<string, unknown>;
+  at: string;
+  saved: boolean;
+};
+
+const COPILOT_PROMPTS = [
+  "What must I verify in the next 60 seconds?",
+  "What information is missing?",
+  "Explain the chemical hazard simply",
+  "What questions should I ask the field team?",
+  "Draft a handover for the EHS lead",
+  "Compare this event against the approved SOP",
+];
+
+function CopilotPanel({ open, onClose, context, onSaveNote }: {
+  open: boolean;
+  onClose: () => void;
+  context: { location: string; substance: string; incidentType: string; language: string };
+  onSaveNote: (text: string) => void;
+}) {
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [trace, setTrace] = useState<CopilotEntry[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Which facts leave this machine. Ticked by the operator, and the
+  // drawer below prints exactly this object -- not a description of it.
+  // A transparency panel that lists something other than what was sent
+  // is worse than no panel: it is a false assurance.
+  const [share, setShare] = useState({
+    location: true, substance: true, incidentType: true, language: false,
+  });
+
+  const shared = useMemo(() => {
+    const out: Record<string, string> = {};
+    if (share.location) out.bay = context.location;
+    if (share.substance) out.substance = context.substance;
+    if (share.incidentType) out.incident_type = context.incidentType;
+    if (share.language) out.language = context.language;
+    return out;
+  }, [share, context]);
+
+  async function ask(text: string) {
+    const q = text.trim();
+    if (!q || busy) return;
+    setBusy(true);
+    setError(null);
+
+    // A person is standing at this screen waiting, so a long hang is a
+    // worse failure than a refusal. Same reasoning as the incident call.
+    const abort = new AbortController();
+    const giveUp = window.setTimeout(() => abort.abort(), 45000);
+
+    try {
+      const res = await fetch(apiUrl("/incident/copilot"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, shared_context: shared }),
+        signal: abort.signal,
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail ?? "gateway returned " + res.status);
+      }
+
+      const data = await res.json();
+      setTrace((prev) => [{
+        id: Date.now(),
+        question: q,
+        answer: data.answer ?? "",
+        provider: data.provider ?? "unknown",
+        shared: data.shared?.operator_shared_context ?? shared,
+        at: data.timestamp ?? new Date().toISOString(),
+        saved: false,
+      }, ...prev]);
+      setQuestion("");
+    } catch (err) {
+      const e = err as Error;
+      setError(e?.name === "AbortError"
+        ? "The copilot did not answer within 45 seconds. The incident response is unaffected."
+        : e?.message ?? "The copilot is unavailable.");
+    } finally {
+      window.clearTimeout(giveUp);
+      setBusy(false);
+    }
+  }
+
+  if (!open) return null;
+
+  const sharedCount = Object.keys(shared).length;
+
+  return (
+    <>
+      <div className="copilot-scrim" onClick={onClose} aria-hidden="true" />
+      <aside className="copilot" role="dialog" aria-labelledby="copilot-title">
+        <header className="copilot-head">
+          <div>
+            <h2 id="copilot-title"><Sparkles size={16} /> Featherless EHS Copilot</h2>
+            <p>Open-model intelligence &middot; Advisory only</p>
+          </div>
+          <div className="copilot-head-right">
+            <span className="human-mode">Human mode</span>
+            <button type="button" className="copilot-close" onClick={onClose} aria-label="Close copilot">&times;</button>
+          </div>
+        </header>
+
+        {/* Permanent, not conditional. The moment a safety disclaimer is
+            shown only sometimes, its absence starts meaning the opposite. */}
+        <div className="advisory-pill">Advisory only &middot; human in control</div>
+
+        <section className="copilot-section">
+          <h3>Context shared manually</h3>
+          <div className="chips">
+            {([
+              ["location", context.location],
+              ["substance", context.substance],
+              ["incidentType", context.incidentType],
+              ["language", context.language],
+            ] as const).map(([key, value]) => (
+              <button
+                key={key}
+                type="button"
+                className={share[key] ? "chip chip-on" : "chip"}
+                aria-pressed={share[key]}
+                onClick={() => setShare((s) => ({ ...s, [key]: !s[key] }))}
+              >
+                <span aria-hidden="true">{share[key] ? "✓" : "×"}</span> {value}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="drawer-toggle" onClick={() => setDrawerOpen((d) => !d)}>
+            {drawerOpen ? "Hide" : "Show"} exactly what is sent ({sharedCount} field{sharedCount === 1 ? "" : "s"})
+          </button>
+          {drawerOpen && <pre className="shared-drawer">{JSON.stringify(shared, null, 2)}</pre>}
+        </section>
+
+        <section className="copilot-section">
+          <h3>Ask the incident copilot</h3>
+          <textarea
+            className="copilot-input"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="What should I verify before escalating this spill?"
+            rows={3}
+            maxLength={2000}
+          />
+          <button type="button" className="ask-btn" onClick={() => ask(question)} disabled={busy || !question.trim()}>
+            {busy ? <><Sparkles size={14} className="spark-spin" /> Analysing&hellip;</> : "Ask Copilot"}
+          </button>
+
+          <div className="prompt-chips">
+            {COPILOT_PROMPTS.map((p) => (
+              <button key={p} type="button" className="prompt-chip" disabled={busy} onClick={() => ask(p)}>{p}</button>
+            ))}
+          </div>
+        </section>
+
+        {error && <div className="copilot-error" role="alert">{error}</div>}
+
+        {trace.map((entry) => (
+          <article key={entry.id} className="answer-card">
+            <div className="answer-head">
+              <span className="answer-tag">AI advisory &middot; review before use</span>
+              <span className="answer-meta">{entry.provider}</span>
+            </div>
+            <p className="answer-q">{entry.question}</p>
+            <div className="answer-body">{entry.answer}</div>
+            <div className="answer-actions">
+              <button type="button" onClick={() => navigator.clipboard?.writeText(entry.answer)}>Copy</button>
+              <button
+                type="button"
+                onClick={() => {
+                  onSaveNote(entry.answer);
+                  setTrace((prev) => prev.map((t) => (t.id === entry.id ? { ...t, saved: true } : t)));
+                }}
+              >
+                {entry.saved ? "Added to incident notes" : "Add note to incident"}
+              </button>
+              <button type="button" onClick={() => setQuestion("Follow-up: ")}>Ask follow-up</button>
+            </div>
+            {entry.saved && <div className="ai-assisted-badge">AI-assisted, operator reviewed</div>}
+            <div className="answer-shared">
+              Sent: {Object.keys(entry.shared).join(", ") || "nothing"} &middot; {new Date(entry.at).toLocaleTimeString()}
+            </div>
+          </article>
+        ))}
+
+        <footer className="copilot-foot">
+          <strong>Human decision required</strong>
+          <span>Featherless can analyse context. Only an authorised operator can issue instructions. This panel cannot dispatch, broadcast, or control equipment.</span>
+        </footer>
+      </aside>
+    </>
+  );
+}
+
 export default function Home() {
+
   const [location, setLocation] = useState(locations[0]);
   const [substance, setSubstance] = useState(substances[0]);
   const [incidentType, setIncidentType] = useState<IncidentType>("Spill");
@@ -503,6 +708,11 @@ export default function Home() {
   // built around -- nothing that reaches a worker is issued without an
   // authorised human approving it.
   const [review, setReview] = useState<IncidentResponse | null>(null);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  // Notes the operator chose to keep from the copilot. Kept in the
+  // console rather than posted anywhere: the copilot advises, the
+  // person decides what becomes part of the incident.
+  const [operatorNotes, setOperatorNotes] = useState<string[]>([]);
 
   const [cameraOn, setCameraOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -817,8 +1027,29 @@ export default function Home() {
             <div className="briefing-row"><span>On-call lead</span><strong>Shift B · EHS desk</strong></div>
             <div className="briefing-row"><span>Protocol library</span><strong>Synced 2 min ago</strong></div>
           </section>
-          <div className="rail-notice"><span><AlertTriangle size={14} /> Decision support</span><p>Protocol output is generated from the selected chemical and event type.</p></div>
+          <button type="button" className="copilot-open" onClick={() => setCopilotOpen(true)}>
+            <span className="copilot-open-title"><Sparkles size={15} /> Open Featherless EHS Copilot</span>
+            <span className="copilot-open-sub">Human-guided analysis &middot; no autonomous actions</span>
+          </button>
+          {operatorNotes.length > 0 && (
+            <section className="notes-card">
+              <div className="briefing-heading"><span className="eyebrow">Incident notes</span><span className="notes-count">{operatorNotes.length}</span></div>
+              {operatorNotes.map((note, i) => (
+                <div key={i} className="note-row">
+                  <span className="note-badge">AI-assisted, operator reviewed</span>
+                  <p>{note.length > 220 ? note.slice(0, 220) + String.fromCharCode(8230) : note}</p>
+                </div>
+              ))}
+            </section>
+          )}
+          <div className="rail-notice"><span><AlertTriangle size={14} /> Decision support</span><p>Protocol output is generated from the selected chemical and event type. The copilot is advisory and never issues instructions.</p></div>
         </aside>
+        <CopilotPanel
+          open={copilotOpen}
+          onClose={() => setCopilotOpen(false)}
+          context={{ location, substance, incidentType, language }}
+          onSaveNote={(text) => setOperatorNotes((n) => [text, ...n])}
+        />
         <MediaDock cameraOn={cameraOn} micOn={micOn} unknownMaterial={substance === "Unknown Substance"} fieldLevel={fieldLevel} voiceLevel={voiceLevel} mediaError={mediaError} videoRef={videoRef} onToggleCamera={toggleCamera} onToggleMic={toggleMic} />
       </div>
 

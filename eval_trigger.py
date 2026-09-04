@@ -56,6 +56,7 @@ SUITES = [
     ("incident service", ["incident_api.py", "--selftest"]),
     ("escalation watcher", ["escalation_watcher.py", "--selftest"]),
     ("bay twin", ["bay_twin.py", "--selftest"]),
+    ("phrases", ["phrases.py", "--selftest"]),
     ("incident rehearsal", ["smoke_test.py", "incident", "--no-audio", "--no-open"]),
 ]
 
