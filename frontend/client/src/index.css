@@ -358,3 +358,14 @@ select { -webkit-tap-highlight-color: transparent; }
   border: 1px solid rgba(217, 154, 43, 0.45);
   color: #e8c483;
 }
+
+/* The operator media panel invites the reading that it is doing
+   detection. It is not; the bay cameras are. Said in the panel itself. */
+.media-scope {
+  margin-top: 8px !important;
+  padding-top: 9px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px !important;
+  line-height: 1.55;
+  color: #7c8698 !important;
+}

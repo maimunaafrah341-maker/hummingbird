@@ -138,6 +138,14 @@ function MediaDock({ cameraOn, micOn, unknownMaterial, fieldLevel, voiceLevel, m
         <div className="media-title-row"><span className="media-live-dot" /><span className="eyebrow">Field media link</span><span className="media-optional">Optional / operator controlled</span></div>
         <h2>Visual &amp; audio confirmation</h2>
         <p>{unknownMaterial ? "Unknown material selected. Use the visual and audio link to help responders confirm the release before entry." : "Keep a live view available for the response team. Camera and microphone access can be opened or closed at any time."}</p>
+        {/* Said plainly, because the panel invites the opposite reading.
+            This is a human confirmation feed: a responder looking at a
+            bay before they walk into it. PPE detection is a different
+            camera doing a different job -- the fixed bay cameras run
+            the YOLO trigger, which opens incidents on its own without
+            anybody at this console. Leaving that unstated makes an
+            operator feed look like a detector that is failing. */}
+        <p className="media-scope">This feed is for human confirmation. It does not run detection &mdash; PPE monitoring happens on the fixed bay cameras, which open incidents automatically.</p>
         {mediaError && <span className="media-error" role="status">{mediaError}</span>}
         {unknownMaterial && <div className="unknown-actions"><span>Recommended for unknown substance</span><button onClick={onToggleCamera}>{cameraOn ? "Camera active" : "View from camera"}</button><button onClick={onToggleMic}>{micOn ? "Mic active" : "Listen to field"}</button></div>}
       </div>
