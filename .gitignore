@@ -26,3 +26,11 @@ datasets/
 
 # Evidence frames from live triggers. Regenerated every run.
 outputs/evidence/
+
+# Demo footage. 300MB+ of stock video -- keep it local, rank_clips.py
+# tells you which ones fire.
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm

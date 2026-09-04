@@ -86,6 +86,17 @@ WINDOW_FRAMES = int(os.getenv("HAZARDWATCH_WINDOW", "8"))
 # room produces false hardhat-misses; lower it if real ones are missed.
 CONFIDENCE_FLOOR = float(os.getenv("HAZARDWATCH_CONF", "0.45"))
 
+# Frames wider than this are downscaled before inference.
+#
+# YOLO letterboxes everything to 640 internally, so handing it a 4K
+# frame buys no accuracy and costs a large resize on every frame.
+# Measured on 3840x2160 stock footage: 5.3 fps native against 13.6 fps
+# at 1920, with the detections identical to two decimal places
+# (NO-Mask 0.60, NO-Safety Vest 0.75 either way). 4K demo clips are
+# common and this is the difference between a smooth demo and a
+# slideshow.
+MAX_INFERENCE_WIDTH = int(os.getenv("HAZARDWATCH_MAX_WIDTH", "1920"))
+
 # Ordered candidates. The first that loads wins. The stock yolov8n.pt at
 # the end is a COCO model with no PPE classes at all -- it is here so an
 # offline laptop still starts, and run_camera() says loudly that the
@@ -320,6 +331,12 @@ def fire_incident(violation, zone, source="kiosk", confidence=None,
 EVIDENCE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "outputs", "evidence")
 
+# Longest edge of a saved evidence frame. The dossier renders it about
+# 165mm wide on A4, so anything past this is detail no reader will ever
+# see -- paid for in PDF build time on the camera thread. See
+# save_evidence() for the measurement that set this.
+EVIDENCE_MAX_WIDTH = int(os.getenv("HAZARDWATCH_EVIDENCE_WIDTH", "1280"))
+
 
 def save_evidence(annotated_frame, zone, violation):
     """
@@ -342,12 +359,93 @@ def save_evidence(annotated_frame, zone, violation):
         safe = "".join(c if c.isalnum() else "-" for c in "%s_%s" % (zone, violation))
         path = os.path.join(EVIDENCE_DIR, "%s_%s.jpg" % (stamp, safe))
 
-        cv2.imwrite(path, annotated_frame)
+        # Downscale before writing. Measured on 4K footage: embedding a
+        # full 3840x2160 frame made a single dossier take NINE SECONDS,
+        # which stalls the camera loop behind it and drags a live demo
+        # from ~12 fps to 1. The report is A4 -- it renders this at about
+        # 165mm wide and cannot show more than this anyway.
+        frame = annotated_frame
+        height, width = frame.shape[:2]
+
+        if width > EVIDENCE_MAX_WIDTH:
+            scale = EVIDENCE_MAX_WIDTH / float(width)
+            frame = cv2.resize(frame, (EVIDENCE_MAX_WIDTH, int(height * scale)),
+                               interpolation=cv2.INTER_AREA)
+
+        cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         return path if os.path.exists(path) else None
 
     except Exception as e:
         log("  evidence not saved: %s: %s" % (type(e).__name__, e))
         return None
+
+
+_downstream_queue = None
+_downstream_worker = None
+
+
+def dispatch_downstream_async(result, evidence=None):
+    """
+    Queue the follow-through instead of blocking the camera on it.
+
+    Measured: speaking one alert takes **8.1 seconds** (pyttsx3 blocks
+    until the utterance finishes), against 0.02s for the PDF and 0.00s
+    for the webhook. Done inline that stalls the loop for eight seconds
+    per incident -- the bay goes unwatched, and with --show the preview
+    window freezes, which on stage is indistinguishable from a crash.
+
+    One worker, not one thread per incident, because the TTS engine is a
+    process-global that must not be driven from two threads at once. The
+    queue serialises alerts and the camera never waits on any of them.
+    """
+
+    global _downstream_queue, _downstream_worker
+
+    import queue
+    import threading
+
+    if _downstream_queue is None:
+        _downstream_queue = queue.Queue()
+
+        def worker():
+            while True:
+                item = _downstream_queue.get()
+
+                if item is None:
+                    _downstream_queue.task_done()
+                    return
+
+                try:
+                    dispatch_downstream(item[0], evidence=item[1])
+                except Exception as e:
+                    log("  downstream failed: %s: %s" % (type(e).__name__, e))
+                finally:
+                    _downstream_queue.task_done()
+
+        _downstream_worker = threading.Thread(target=worker, daemon=True)
+        _downstream_worker.start()
+
+    _downstream_queue.put((result, evidence))
+
+
+def drain_downstream(timeout=90):
+    """
+    Wait for queued alerts to finish. Called when the loop ends so a
+    clip that stops does not cut off the announcement it just triggered.
+    """
+
+    if _downstream_queue is None:
+        return
+
+    pending = _downstream_queue.unfinished_tasks
+
+    if pending:
+        log("finishing %d queued alert(s)..." % pending)
+
+    deadline = time.monotonic() + timeout
+
+    while _downstream_queue.unfinished_tasks and time.monotonic() < deadline:
+        time.sleep(0.1)
 
 
 def dispatch_downstream(result, speak=True, dossier=True, webhook=True,
@@ -450,13 +548,19 @@ def load_model(candidates=None):
     raise RuntimeError("no model would load. Tried:\n  " + "\n  ".join(tried))
 
 
+def is_violation_name(name):
+    """Does this class name mark *missing* equipment?"""
+
+    return str(name).lower().startswith(VIOLATION_PREFIXES)
+
+
 def _violation_classes(model):
     """Class ids whose name marks *missing* equipment. May be empty."""
 
     return {
         class_id: name
         for class_id, name in model.names.items()
-        if name.lower().startswith(VIOLATION_PREFIXES)
+        if is_violation_name(name)
     }
 
 
@@ -531,7 +635,7 @@ def frames_from(source, max_frames=None):
 
 def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                language="en", show=False, gate=None, downstream=True,
-               max_frames=None):
+               max_frames=None, max_width=MAX_INFERENCE_WIDTH):
     """
     Watch one source, feed every frame through the gate, fire what the
     gate lets through. Ctrl-C to stop.
@@ -579,6 +683,16 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
             else:
                 blank_frames = 0
 
+            # Downscale before inference, not after: see
+            # MAX_INFERENCE_WIDTH. The evidence frame is drawn from this
+            # same array, so the picture in the report matches what the
+            # model was actually shown.
+            if max_width and frame.shape[1] > max_width:
+                scale = max_width / float(frame.shape[1])
+                frame = cv2.resize(
+                    frame, (max_width, int(frame.shape[0] * scale)),
+                    interpolation=cv2.INTER_AREA)
+
             results = model(frame, verbose=False, conf=CONFIDENCE_FLOOR)[0]
 
             seen = {}
@@ -612,7 +726,8 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                 )
 
                 if downstream:
-                    dispatch_downstream(result, evidence=evidence)
+                    # Queued, not inline: see dispatch_downstream_async.
+                    dispatch_downstream_async(result, evidence=evidence)
 
             if show:
                 cv2.imshow("HazardWatch %s" % zone,
@@ -628,6 +743,11 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
         # The frame generator owns the capture and releases it itself.
         if show:
             cv2.destroyAllWindows()
+
+        # Let queued alerts finish. A clip that ends mid-announcement
+        # would otherwise cut off the thing it just triggered.
+        if downstream:
+            drain_downstream()
 
     log("%d incident(s) fired" % fired_total)
     return fired_total
@@ -979,6 +1099,8 @@ def main(argv=None):
                         help="how many recent frames those hits are counted over")
     camera.add_argument("--max-frames", type=int, default=None,
                         help="stop after N frames (a still image is otherwise endless)")
+    camera.add_argument("--max-width", type=int, default=MAX_INFERENCE_WIDTH,
+                        help="downscale wider frames before inference (0 disables)")
 
     kiosk = sub.add_parser(
         "kiosk", help="one trigger, no camera -- what a physical button calls")
@@ -1025,6 +1147,7 @@ def main(argv=None):
         substance=args.substance, language=args.language, show=args.show,
         gate=TriggerGate(cooldown=args.cooldown, hits=args.hits, window=args.window),
         downstream=not args.no_downstream, max_frames=args.max_frames,
+        max_width=args.max_width,
     )
     return 0
 
