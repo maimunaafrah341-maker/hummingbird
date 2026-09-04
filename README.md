@@ -268,8 +268,47 @@ no API keys at all.
 |---|---|
 | `HAZARDWATCH_HITS` / `HAZARDWATCH_WINDOW` | The K-of-M gate. Defaults 3 and 8. |
 | `HAZARDWATCH_CONF` | Confidence floor. Default 0.45. |
+| `HAZARDWATCH_TIMEOUT` | Client timeout for `/incident`. Default **90s** — see below. |
 | `CORS_ORIGINS` | Frontend origin. Unset allows any, which is right until the frontend has a URL. |
 | `FEATHERLESS_API_KEY` | Enables `POST /incident/brief`, and nothing else. |
+
+### One `/incident` at a time
+
+`/incident` is called **serially, never concurrently.** Measured against
+the deployed service: six requests fired back to back had **five
+rejected with 429**.
+
+The cause is not the request rate in the abstract. An abandoned request
+keeps consuming the provider's rate limit server-side after the client
+has given up waiting on it, and there is no way to cancel it once sent
+— so giving up early costs both the incident *and* the quota. The only
+pacing that works is to never have a second request in flight.
+
+Three places enforce that:
+
+| Where | How |
+|---|---|
+| `post_incident()` | A process-wide lock held for the whole round trip, released only when the call fully returns — success, 503, or client timeout. |
+| `fire_incident_async()` | The camera's POSTs go on the single downstream worker, so they are serial *and* the loop never waits on one. |
+| The kiosk UI | A promise chain, not a boolean flag — React state lands a render late, so `disabled` alone still lets a fast double-click put two on the wire. Queued presses show **"Processing previous alert…"**. |
+
+The client timeout is **90 seconds**, matching the worst case to plan
+around. That is only safe because the camera no longer blocks on it:
+inline, a frame with three violations would have stalled the loop for
+four and a half minutes — the exact failure this project exists to
+prevent. Verified against a stub that sleeps 3s per call: peak
+concurrency 1, and the loop finished all 90 frames while the third
+incident was still in flight.
+
+**The lock is process-local, and that is a real limit.** Two bays
+watched by two `yolo_trigger` processes do not queue behind each other.
+One process watching several zones does. Anything wider has to be
+serialised on the service side.
+
+Note that this repo's own `/incident` is deterministic and calls no
+model, so it cannot 429 — unless `INCIDENT_LLM=1` is set, which is off
+by default. If you are hitting rate limits on the safety path, check
+that variable before reaching for the queue.
 
 ### About Featherless
 

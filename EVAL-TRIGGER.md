@@ -18,18 +18,18 @@ anything about the other's code.
 
 | Suite | Result | Wall time | Command |
 |---|---|---|---|
-| trigger gate | 20/20 passed | 0.21 s | `python yolo_trigger.py selftest` |
+| trigger gate | 24/24 passed | 1.37 s | `python yolo_trigger.py selftest` |
 | confidence router | 14/14 passed | 0.12 s | `python confidence_router.py --selftest` |
-| dossier | 15/15 passed | 0.79 s | `python dossier.py --selftest` |
-| webhook dispatch | 17/17 passed | 5.35 s | `python webhook_dispatch.py --selftest` |
-| tts alert | 8/8 passed | 1.11 s | `python tts_alert.py --selftest` |
-| alert language | 7/7 passed | 2.82 s | `python alert_language.py --selftest` |
-| incident service | 12/12 passed | 1.23 s | `python incident_api.py --selftest` |
-| escalation watcher | 22/22 passed | 0.75 s | `python escalation_watcher.py --selftest` |
+| dossier | 15/15 passed | 0.78 s | `python dossier.py --selftest` |
+| webhook dispatch | 17/17 passed | 5.82 s | `python webhook_dispatch.py --selftest` |
+| tts alert | 8/8 passed | 1.12 s | `python tts_alert.py --selftest` |
+| alert language | 7/7 passed | 2.80 s | `python alert_language.py --selftest` |
+| incident service | 12/12 passed | 1.28 s | `python incident_api.py --selftest` |
+| escalation watcher | 22/22 passed | 0.82 s | `python escalation_watcher.py --selftest` |
 | bay twin | 26/26 passed | 1.40 s | `python bay_twin.py --selftest` |
-| incident rehearsal | 11/11 passed | 0.52 s | `python smoke_test.py incident --no-audio --no-open` |
+| incident rehearsal | 11/11 passed | 1.07 s | `python smoke_test.py incident --no-audio --no-open` |
 
-**152 of 152 checks pass.** Each suite runs as its own process, so none
+**156 of 156 checks pass.** Each suite runs as its own process, so none
 of them can pass on state another one left behind.
 
 ## What the gate suppresses
@@ -44,21 +44,21 @@ continuous violation fed through the real `TriggerGate`:
 | Suppression | 99.9% |
 
 That is one minute of one person without a hardhat. The gate costs
-**2.3 µs per frame**, so the thing that prevents the flood is far
+**2.2 µs per frame**, so the thing that prevents the flood is far
 cheaper than a single inference.
 
 ## Import cost
 
 | Module | Import |
 |---|---|
-| `yolo_trigger` | 0.088 s |
-| `dossier` | 0.387 s |
-| `webhook_dispatch` | 0.107 s |
-| `tts_alert` | 0.030 s |
-| `alert_language` | 0.090 s |
-| `confidence_router` | 0.008 s |
-| `escalation_watcher` | 0.012 s |
-| `bay_twin` | 0.953 s |
+| `yolo_trigger` | 0.100 s |
+| `dossier` | 0.332 s |
+| `webhook_dispatch` | 0.106 s |
+| `tts_alert` | 0.031 s |
+| `alert_language` | 0.104 s |
+| `confidence_router` | 0.009 s |
+| `escalation_watcher` | 0.011 s |
+| `bay_twin` | 1.040 s |
 
 `yolo_trigger` does not import ultralytics at module scope — the
 kiosk path, and the whole incident rehearsal, never load torch. That
@@ -70,25 +70,22 @@ Model: `hf:Hansung-Cho/yolov8-ppe-detection:best.pt`, 10 classes, of which 3 are
 
 | What | Measured |
 |---|---|
-| `from ultralytics import YOLO` | 3.61 s |
-| Model load (cached weights) | 12.92 s |
-| Inference alone, one 810×1080 frame in memory | 53 ms  (18.7 fps) |
-| Full per-frame loop — frame in, gate decision out | **51 ms  (19.7 fps)** |
+| `from ultralytics import YOLO` | 3.71 s |
+| Model load (cached weights) | 2.14 s |
+| Inference alone, one 810×1080 frame in memory | 56 ms  (18.0 fps) |
+| Full per-frame loop — frame in, gate decision out | **67 ms  (14.9 fps)** |
 
-Those two rows agree to within 5%, which is run-to-run noise
-on a busy laptop rather than a real difference. That is the
-finding: everything the loop does outside the model — unpacking
-boxes, the gate decision — costs microseconds against ~53 ms of
-inference, so the model is effectively the entire frame budget.
-Neither number is reliably the larger one; quote either.
+The loop figure is the one to quote. Inference alone is not a
+frame rate, it is one term in it — the gap between the rows is
+everything else a frame costs.
 
 RSS, which is what decides where this can run:
 
 ```
-baseline python      :     18 MB
-+ ultralytics        :    219 MB
-+ model loaded       :    256 MB
-+ first inference    :    374 MB
+baseline python      :     19 MB
++ ultralytics        :    220 MB
++ model loaded       :    257 MB
++ first inference    :    390 MB
 ```
 
 Detections on `bus.jpg`, the reference image ultralytics ships, so this
@@ -100,7 +97,7 @@ row is reproducible on any machine:
 | `NO-Hardhat` | 0.804 |
 | `NO-Mask` | 0.601 |
 
-At **18.7 fps** the 3-of-8 confirmation costs **0.2 s** at best
+At **14.9 fps** the 3-of-8 confirmation costs **0.2 s** at best
 -- longer whenever the detector misses a frame -- before a
 violation fires — the latency of the autonomous path, set by CPU
 inference rather than by the gate.
@@ -116,34 +113,26 @@ built-in camera:
 | What | Measured |
 |---|---|
 | Resolution | 1280×720 |
-| Capture alone | 50 ms  (19.8 fps) |
-| Full live path — capture, infer, gate | **47 ms  (21.2 fps)** |
+| Capture alone | 33 ms  (30.5 fps) |
+| Full live path — capture, infer, gate | **48 ms  (20.7 fps)** |
 | Time to fire (3 hits of 8) | **0.1 s** at best |
 
-What the camera actually saw during the run:
-
-| Class | Confidence |
-|---|---|
-| `NO-Safety Vest` | 0.884 |
-| `NO-Mask` | 0.878 |
-| `Person` | 0.854 |
-| `NO-Hardhat` | 0.832 |
-
-So the lens-to-model path is verified end to end on this
-machine, not inferred from the file-source numbers.
+The camera detected nothing above the confidence floor during
+the run — an empty room, most likely. The path is measured;
+whether it *fires* was not exercised.
 
 ## Output stages
 
 | Stage | Measured |
 |---|---|
-| PDF dossier | 16 ms (3.2 KB) |
+| PDF dossier | 15 ms (3.2 KB) |
 | Webhook round trip (local stub) | 1.4 ms |
-| TTS cache hit | 0.72 ms |
+| TTS cache hit | 0.67 ms |
 | TTS mp3 size | 52.1 KB |
-| TTS cold synthesis (network) | **4.81 s** |
+| TTS cold synthesis (network) | **2.95 s** |
 | SMS body | 158 / 160 characters |
 
-Cold synthesis is **6729×** slower than a cache hit and needs the
+Cold synthesis is **4423×** slower than a cache hit and needs the
 network at the moment the alert fires. Prefetch before a demo:
 
 ```
@@ -175,6 +164,8 @@ Stated so the numbers above are not read as more than they are.
 - **The real `/incident` service.** Every run here uses a local mock
   answering the assumed contract shape. Nothing is known about the
   teammate's endpoint until this is pointed at it.
+- **A camera that sees a violation.** The live path is timed, but
+  nothing was detected during the run, so firing is unexercised.
 - **Real SMS, Telegram or Slack delivery.** The dispatch payload is
   built and sent for real; the recipient is a stub. No message was
   ever sent to a carrier or a workspace.
