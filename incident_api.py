@@ -401,6 +401,19 @@ app = (FastAPI(title="HazardWatch incident service (reference implementation)")
 # while the timer runs another.
 TWIN_ACK_WINDOW = float(os.getenv("HAZARDWATCH_ACK_WINDOW", "45"))
 
+# Translate the spoken alert and the steps into the requested language.
+#
+# Opt-in, and deliberately so. Translation goes through llm.py, which
+# tries Featherless first -- and translating on every incident is
+# automated traffic on a plan that excludes it, which is the 429 we
+# already traced once. Turn this on only with a Groq/Gemini/OpenRouter
+# key set, or on a Featherless Developer plan.
+#
+# Off, the response still carries a `localization` block saying exactly
+# why the text is in English. Silence is what made the language picker
+# look broken; an honest reason is not the same thing as a failure.
+TRANSLATE = os.getenv("INCIDENT_TRANSLATE", "").strip() == "1"
+
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "*").split(",")
@@ -480,6 +493,8 @@ def incident(request, x_api_key=None):
     response["latency_ms"] = round(
         (datetime.now(timezone.utc) - started).total_seconds() * 1000, 2)
 
+    response["localization"] = localize_response(response, request.language)
+
     # Tell the twin. Wrapped because telemetry must never be able to
     # turn a successful assessment into a 500 -- the caller is a trigger
     # waiting to speak an alert.
@@ -501,6 +516,76 @@ def incident(request, x_api_key=None):
             pass
 
     return response
+
+
+def localize_response(response, language):
+    """
+    Translate the spoken alert and the steps, and say honestly what
+    language the result is actually in.
+
+    The rule from API_CONTRACT.md, extended from text to safety
+    instructions: **never present an untranslated string as a
+    translation.** So `language` here always describes what the text
+    below IS, never what was asked for. A client that renders
+    localization.language cannot mislabel English as Hindi.
+
+    Never raises. A translation failure degrades to English with a
+    stated reason; it does not cost the caller their incident.
+    """
+
+    requested = (language or "en").strip().lower()
+
+    block = {
+        "requested": requested,
+        "language": "en",
+        "translated": False,
+        "reason": None,
+        "spoken_alert": response.get("spoken_alert", ""),
+        "steps": list(response.get("steps", [])),
+    }
+
+    if requested in ("", "en", "eng", "english"):
+        block["reason"] = "English requested -- nothing to translate"
+        return block
+
+    if not TRANSLATE:
+        block["reason"] = ("translation is not enabled on this deployment "
+                           "(set INCIDENT_TRANSLATE=1 and a provider key)")
+        return block
+
+    try:
+        import alert_language
+
+        spoken = alert_language.localize(response.get("spoken_alert", ""),
+                                         requested)
+
+        if not spoken.get("translated"):
+            block["reason"] = spoken.get("reason") or "translation unavailable"
+            return block
+
+        steps = []
+
+        for step in response.get("steps", []):
+            done = alert_language.localize(step, requested)
+            # One failure mid-list would otherwise produce a half-Hindi,
+            # half-English instruction set, which is worse than either.
+            if not done.get("translated"):
+                block["reason"] = done.get("reason") or "step translation failed"
+                return block
+
+            steps.append(done["text"])
+
+        block.update({
+            "language": spoken.get("language", requested),
+            "translated": True,
+            "spoken_alert": spoken["text"],
+            "steps": steps,
+        })
+
+    except Exception as e:
+        block["reason"] = "%s: %s" % (type(e).__name__, str(e)[:120])
+
+    return block
 
 
 def shift_brief(request):
@@ -660,6 +745,34 @@ def selftest():
           20 < len(plain["spoken_alert"]) < 200, plain["spoken_alert"])
 
     # The whole point of the tier split: no LLM, no network, still works.
+    # -- the language field used to be accepted and ignored ----------
+
+    english = assess("NO-Hardhat", "BAY-3", None)
+
+    as_english = localize_response(english, "en")
+    check("English asks for no translation",
+          as_english["language"] == "en" and not as_english["translated"],
+          as_english["reason"])
+
+    hindi = localize_response(english, "hi")
+    check("a non-English request is answered, not ignored",
+          hindi["requested"] == "hi" and hindi["reason"],
+          hindi["reason"][:46])
+
+    check("untranslated text is never labelled as translated",
+          hindi["language"] == "en" and not hindi["translated"],
+          "language says what the text IS, not what was asked")
+
+    check("localization always carries renderable text",
+          hindi["spoken_alert"] == english["spoken_alert"]
+          and len(hindi["steps"]) == len(english["steps"]),
+          "falls back to English rather than to nothing")
+
+    check("a broken translator cannot cost you the incident",
+          localize_response({"spoken_alert": "x", "steps": []},
+                            "te")["spoken_alert"] == "x",
+          "degrades, never raises")
+
     check("rules tier needs nothing", plain["tier"] == "rules", plain["tier"])
 
     print("\n%d/%d incident checks passed" % (sum(checks), len(checks)))
