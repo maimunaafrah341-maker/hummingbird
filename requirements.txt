@@ -6,9 +6,13 @@ google-genai>=0.3.0
 
 # Retrieval for POST /incident. Base dependencies, not optional: an
 # incident response that is not grounded in the SDS corpus is the
-# feature failing, not a tier degrading. This differs from the language
-# semantic tier, which is genuinely optional (requirements-semantic.txt)
-# because script detection still answers correctly without it.
+# feature failing, not a tier degrading.
+#
+# These used to live in a separate requirements-semantic.txt, installed
+# only when the language module's semantic tier was wanted -- that tier
+# is genuinely optional, because script detection still answers
+# correctly without it. Retrieval is not optional in the same way, so
+# the split stopped meaning anything and the file was removed.
 #
 # sentence-transformers pulls in torch, so this is the dependency that
 # makes the install large. It embeds the corpus at ingest time and the
