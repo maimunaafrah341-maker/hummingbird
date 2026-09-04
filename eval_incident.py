@@ -313,8 +313,17 @@ def eval_localization():
 # LIVE: THE ENDPOINT
 # ============================================================
 
-def call(base, path, method="GET", body=None, timeout=180):
-    """Returns (status, parsed). Never raises."""
+def call(base, path, method="GET", body=None, timeout=300):
+    """
+    Returns (status, parsed). Never raises.
+
+    The timeout is generous because the provider's latency is bimodal:
+    most assessments finish in under 25s, and a minority take four
+    minutes. Measured 2026-09-04 -- a request that this harness gave up
+    on at 180s was re-issued and succeeded in 242.8s. A timeout under
+    the tail turns a slow provider into a red check that looks like a
+    broken endpoint.
+    """
 
     url = base.rstrip("/") + path
     data = json.dumps(body).encode() if body is not None else None
