@@ -70,7 +70,7 @@ with its own Docker Command. Only do this if the demo actually uses
 | Language | Docker |
 | Region | Singapore |
 | Instance Type | Free |
-| **Docker Command** | `uvicorn incident_api:app --host 0.0.0.0 --port $PORT` |
+| **Docker Command** | *(leave blank — the image now defaults to the incident service)* |
 
 **Environment variables:**
 
@@ -80,6 +80,16 @@ with its own Docker Command. Only do this if the demo actually uses
 | `INCIDENT_LLM` | `1` | optional — only to reword steps via an LLM |
 | `GROQ_API_KEY` | your key | only if `INCIDENT_LLM=1` |
 
+**The image defaults to `incident_api:app` as of the Dockerfile change.**
+It used to default to `api:app`, which is why `hummingbird-2` came up
+green, passed its health check — both apps serve `/health` — and
+returned **404 on every `/incident`**. Nothing in the logs said so, and
+the console showed `DEMO FALLBACK` as though the frontend were at fault.
+
+If a service was created before that change, either **redeploy it from
+`main`** or set the Docker Command above explicitly. To serve the
+*language* service instead, set `HAZARDWATCH_APP=api:app`.
+
 `GROQ_API_KEY` is **not** required. The incident service answers from a
 deterministic rules table with no network calls; the LLM tier only
 rewords the steps and falls back to the rules if it fails. Severity and
@@ -88,16 +98,21 @@ the contraindication are never LLM-generated.
 **Verify it before touching the frontend:**
 
 ```bash
-curl https://hummingbird-1.onrender.com/health
+curl https://YOUR-SERVICE.onrender.com/health
 
-curl -X POST https://hummingbird-1.onrender.com/incident \
+curl -X POST https://YOUR-SERVICE.onrender.com/incident \
   -H "Content-Type: application/json" \
   -d '{"bay_id":"Bay-3","incident_type":"Spill","substance_code":"NAOH"}'
 ```
 
 The second should return `severity`, `steps`, `spoken_alert` and
-`contraindication`. If it 404s, the Docker Command is still pointing at
-`api:app`.
+`contraindication`.
+
+**Read `/health` carefully — it tells you which app answered.** The
+incident service returns `tiers: {rules, llm}` with `substances` and
+`violations`. The language service returns `tiers: {script, semantic}`
+with `languages`. Seeing the second one means `/incident` will 404, and
+a health check alone will never tell you, because both return 200.
 
 ---
 
@@ -214,7 +229,7 @@ successful build and a blank page.
 **Environment variable, set BEFORE the first build:**
 
 ```
-VITE_API_BASE_URL = https://hummingbird-1.onrender.com
+VITE_API_BASE_URL = https://YOUR-SERVICE.onrender.com
 ```
 
 Vite inlines `import.meta.env.*` at **build time**. Adding this
