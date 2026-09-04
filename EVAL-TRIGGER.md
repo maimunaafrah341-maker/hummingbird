@@ -18,12 +18,12 @@ anything about the other's code.
 
 | Suite | Result | Wall time | Command |
 |---|---|---|---|
-| trigger gate | 11/11 passed | 0.21 s | `python yolo_trigger.py selftest` |
-| dossier | 15/15 passed | 0.72 s | `python dossier.py --selftest` |
-| webhook dispatch | 17/17 passed | 5.83 s | `python webhook_dispatch.py --selftest` |
-| tts alert | 5/5 passed | 0.99 s | `python tts_alert.py --selftest` |
-| alert language | 7/7 passed | 2.27 s | `python alert_language.py --selftest` |
-| incident rehearsal | 11/11 passed | 0.96 s | `python smoke_test.py incident --no-audio --no-open` |
+| trigger gate | 11/11 passed | 0.20 s | `python yolo_trigger.py selftest` |
+| dossier | 15/15 passed | 0.79 s | `python dossier.py --selftest` |
+| webhook dispatch | 17/17 passed | 5.44 s | `python webhook_dispatch.py --selftest` |
+| tts alert | 5/5 passed | 1.32 s | `python tts_alert.py --selftest` |
+| alert language | 7/7 passed | 2.28 s | `python alert_language.py --selftest` |
+| incident rehearsal | 11/11 passed | 1.01 s | `python smoke_test.py incident --no-audio --no-open` |
 
 **66 of 66 checks pass.** Each suite runs as its own process, so none
 of them can pass on state another one left behind.
@@ -40,18 +40,18 @@ continuous violation fed through the real `TriggerGate`:
 | Suppression | 99.9% |
 
 That is one minute of one person without a hardhat. The gate costs
-**3.2 µs per frame**, so the thing that prevents the flood is far
+**2.8 µs per frame**, so the thing that prevents the flood is far
 cheaper than a single inference.
 
 ## Import cost
 
 | Module | Import |
 |---|---|
-| `yolo_trigger` | 0.132 s |
-| `dossier` | 0.364 s |
-| `webhook_dispatch` | 0.110 s |
-| `tts_alert` | 0.016 s |
-| `alert_language` | 0.094 s |
+| `yolo_trigger` | 0.084 s |
+| `dossier` | 0.311 s |
+| `webhook_dispatch` | 0.121 s |
+| `tts_alert` | 0.012 s |
+| `alert_language` | 0.108 s |
 
 `yolo_trigger` does not import ultralytics at module scope — the
 kiosk path, and the whole incident rehearsal, never load torch. That
@@ -63,22 +63,22 @@ Model: `hf:Hansung-Cho/yolov8-ppe-detection:best.pt`, 10 classes, of which 3 are
 
 | What | Measured |
 |---|---|
-| `from ultralytics import YOLO` | 3.64 s |
-| Model load (cached weights) | 2.20 s |
-| Inference alone, one 810×1080 frame in memory | 62 ms  (16.2 fps) |
-| Full per-frame loop — frame in, gate decision out | **63 ms  (16.0 fps)** |
+| `from ultralytics import YOLO` | 3.74 s |
+| Model load (cached weights) | 1.95 s |
+| Inference alone, one 810×1080 frame in memory | 52 ms  (19.2 fps) |
+| Full per-frame loop — frame in, gate decision out | **50 ms  (20.2 fps)** |
 
-Those two rows agree to within 1%, which is run-to-run noise
+Those two rows agree to within 5%, which is run-to-run noise
 on a busy laptop rather than a real difference. That is the
 finding: everything the loop does outside the model — unpacking
-boxes, the gate decision — costs microseconds against ~62 ms of
+boxes, the gate decision — costs microseconds against ~52 ms of
 inference, so the model is effectively the entire frame budget.
 Neither number is reliably the larger one; quote either.
 
 RSS, which is what decides where this can run:
 
 ```
-baseline python      :     18 MB
+baseline python      :     19 MB
 + ultralytics        :    219 MB
 + model loaded       :    256 MB
 + first inference    :    406 MB
@@ -93,7 +93,7 @@ row is reproducible on any machine:
 | `NO-Hardhat` | 0.804 |
 | `NO-Mask` | 0.601 |
 
-At **16.0 fps** the 3-of-8 confirmation costs **0.2 s** at best
+At **19.2 fps** the 3-of-8 confirmation costs **0.2 s** at best
 -- longer whenever the detector misses a frame -- before a
 violation fires — the latency of the autonomous path, set by CPU
 inference rather than by the gate.
@@ -109,19 +109,18 @@ built-in camera:
 | What | Measured |
 |---|---|
 | Resolution | 1280×720 |
-| Capture alone | 33 ms  (30.1 fps) |
-| Full live path — capture, infer, gate | **62 ms  (16.1 fps)** |
-| Time to fire (3 hits of 8) | **0.2 s** at best |
+| Capture alone | 33 ms  (30.6 fps) |
+| Full live path — capture, infer, gate | **47 ms  (21.4 fps)** |
+| Time to fire (3 hits of 8) | **0.1 s** at best |
 
 What the camera actually saw during the run:
 
 | Class | Confidence |
 |---|---|
-| `NO-Hardhat` | 0.930 |
-| `Person` | 0.907 |
-| `NO-Safety Vest` | 0.817 |
-| `NO-Mask` | 0.733 |
-| `Safety Cone` | 0.580 |
+| `Person` | 0.887 |
+| `NO-Mask` | 0.880 |
+| `NO-Hardhat` | 0.830 |
+| `NO-Safety Vest` | 0.503 |
 
 So the lens-to-model path is verified end to end on this
 machine, not inferred from the file-source numbers.
@@ -130,14 +129,14 @@ machine, not inferred from the file-source numbers.
 
 | Stage | Measured |
 |---|---|
-| PDF dossier | 18 ms (3.2 KB) |
-| Webhook round trip (local stub) | 3.4 ms |
-| TTS cache hit | 0.85 ms |
+| PDF dossier | 15 ms (3.2 KB) |
+| Webhook round trip (local stub) | 1.5 ms |
+| TTS cache hit | 0.86 ms |
 | TTS mp3 size | 52.1 KB |
-| TTS cold synthesis (network) | **1.07 s** |
+| TTS cold synthesis (network) | **0.97 s** |
 | SMS body | 158 / 160 characters |
 
-Cold synthesis is **1259×** slower than a cache hit and needs the
+Cold synthesis is **1121×** slower than a cache hit and needs the
 network at the moment the alert fires. Prefetch before a demo:
 
 ```
