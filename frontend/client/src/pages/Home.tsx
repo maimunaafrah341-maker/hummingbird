@@ -51,6 +51,16 @@ type IncidentResponse = {
   tier?: string;
   latency_ms?: number;
   substance_class?: string;
+  // The retrieval-grounded backend answers with these instead of
+  // `tier`. Both shapes are in play across the team, and a console that
+  // only understands one of them does not fail loudly -- it falls
+  // through to the other one's default, which is how "deterministic"
+  // ends up printed above a sentence a model wrote.
+  generation_provider?: string;
+  grounded?: boolean;
+  retrieval_mode?: string;
+  retrieved_sources?: string[];
+  spoken_alert_translated?: boolean;
   localization?: {
     requested: string;
     language: string;
@@ -321,6 +331,13 @@ function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLeve
           {evacuationConfirmed && <CheckCircle2 size={22} />}
         </div>
 
+        {!loc && response.spoken_alert_translated && (
+          <div className="translation-state translation-ok">
+            <Languages size={14} />
+            <span>Spoken alert translated by the incident service</span>
+          </div>
+        )}
+
         {loc && loc.requested !== "en" && (
           // Never present English as though it were the requested
           // language. loc.language says what the text IS.
@@ -379,7 +396,12 @@ function ReviewView({ response, context, onConfirm, onCancel, fromFallback }: {
 
   // Rules tier or model tier -- the operator is entitled to know which
   // one wrote what they are about to broadcast to a plant.
-  const fromRules = !response.tier || response.tier.startsWith("rules");
+  // Only the rules tier may claim to be deterministic. A response
+  // carrying generation_provider was written by a model, and defaulting
+  // that to "deterministic" would be the console asserting something
+  // false about the most safety-critical text on the screen.
+  const generated = Boolean(response.generation_provider);
+  const fromRules = !generated && (!response.tier || response.tier.startsWith("rules"));
 
   return (
     <main className="console-shell review-shell">
@@ -429,10 +451,18 @@ function ReviewView({ response, context, onConfirm, onCancel, fromFallback }: {
         <div className="provenance">
           <div className="provenance-row">
             <span>Source</span>
-            <strong>{fromRules ? "Deterministic protocol library — rules table" : `Model-assisted (${response.tier})`}</strong>
+            <strong>{fromRules
+              ? "Deterministic protocol library — rules table"
+              : `Model-generated (${response.generation_provider ?? response.tier ?? "unknown provider"})`}</strong>
           </div>
           {response.regulatory_citation && (
             <div className="provenance-row"><span>Citation</span><strong>{response.regulatory_citation}</strong></div>
+          )}
+          {response.retrieval_mode && (
+            <div className="provenance-row"><span>Retrieval</span><strong>{response.retrieval_mode}{response.grounded === false ? " (ungrounded)" : ""}</strong></div>
+          )}
+          {response.retrieved_sources && response.retrieved_sources.length > 0 && (
+            <div className="provenance-row"><span>Sources</span><strong>{response.retrieved_sources.join(", ")}</strong></div>
           )}
           {response.substance_class && (
             <div className="provenance-row"><span>Substance class</span><strong>{response.substance_class}</strong></div>
