@@ -191,6 +191,18 @@ def eval_retrieval():
             % (mode, len(chunks), sorted({c["source_file"] for c in chunks})),
         )
 
+        # The regression check that matters. A substance with no sheet
+        # of its own must never be answered using another substance's
+        # sheet -- measured 2026-09-04, doing so produced sound-looking
+        # advice citing four documents that did not contain it, which
+        # is undetectable without opening all four. Permanent, and
+        # offline, so it costs nothing to keep enforcing.
+        check(
+            "%s cites no other substance's sds" % code,
+            not [c for c in chunks if c["source_file"].startswith("sds_")],
+            "sources: %s" % sorted({c["source_file"] for c in chunks}),
+        )
+
     # -- open vocabulary: a code nobody has ever heard of --
 
     unknown, mode = incident.retrieve("XYLENE-7", "Xylene", "unlabelled drum leaking")
@@ -199,6 +211,12 @@ def eval_retrieval():
         "unknown substance falls back",
         len(unknown) == incident.DEFAULT_TOP_K and mode == incident.RETRIEVAL_UNKNOWN,
         "%s, %d chunks returned, no crash" % (mode, len(unknown)),
+    )
+
+    check(
+        "unknown substance cites regulations only",
+        unknown and all(c["doc_type"] == "regulation" for c in unknown),
+        "doc_types: %s" % [c["doc_type"] for c in unknown],
     )
 
     # -- null code: unmapped, which is NOT the same as no substance --
@@ -213,14 +231,27 @@ def eval_retrieval():
         "%s, %d chunks" % (mode, len(unmapped)),
     )
 
-    # The substance-aware path is skipped entirely when there is no
-    # code. If it were run against an empty string it would match the
-    # regulation chunks, whose substance_code is null, and return
-    # duty-of-care text in the SDS slots.
+    # INVERTED 2026-09-04, deliberately. This check used to assert the
+    # opposite -- that some SDS was present -- because the bug it
+    # guarded against was running the substance filter against an empty
+    # string, which matches the regulation chunks (whose substance_code
+    # is null) and fills the SDS slots with duty-of-care text.
+    #
+    # That bug is still worth preventing, but returning another
+    # substance's SDS turned out to be the worse failure of the two, so
+    # unmapped retrieval now returns regulations by design. The original
+    # bug is instead ruled out by retrieve() skipping _select() entirely
+    # when there is no code -- there is no empty string to match with.
     check(
-        "unmapped retrieval is not all regulations",
-        any(chunk["doc_type"] == "sds" for chunk in unmapped),
+        "unmapped retrieval is regulations only",
+        unmapped and all(chunk["doc_type"] == "regulation" for chunk in unmapped),
         "doc_types: %s" % [c["doc_type"] for c in unmapped],
+    )
+
+    check(
+        "unmapped cites no substance's sds",
+        not [c for c in unmapped if c["source_file"].startswith("sds_")],
+        "sources: %s" % sorted({c["source_file"] for c in unmapped}),
     )
 
     # -- top_k is honoured --

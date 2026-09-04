@@ -286,11 +286,22 @@ def main():
             # with grounded false, or grounded true with nothing cited,
             # would mean the response is lying about where it came
             # from -- which is worse than either state on its own.
+            # grounded == bool(retrieved_sources) is the exact
+            # guarantee, and the only one worth asserting both ways.
+            #
+            # The relationship to retrieval_mode is one-directional:
+            # "unavailable" always means ungrounded, but ungrounded no
+            # longer implies "unavailable". A corpus holding no
+            # regulation documents would answer an unknown substance
+            # with no chunks at all -- correctly reporting
+            # substance_unknown and grounded=false together.
             check(
                 "incident grounding is self-consistent",
                 bool(body.get("grounded")) == bool(body.get("retrieved_sources"))
-                and (body.get("retrieval_mode") == "unavailable")
-                != bool(body.get("grounded")),
+                and not (
+                    body.get("retrieval_mode") == "unavailable"
+                    and body.get("grounded")
+                ),
                 "grounded=%s mode=%s sources=%s"
                 % (
                     body.get("grounded"),

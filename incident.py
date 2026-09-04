@@ -76,13 +76,13 @@ REQUIRED_KEYS = ("severity", "steps", "contraindication", "spoken_alert")
 #                         for it. The SDS excerpts are about the
 #                         substance the caller named.
 #   substance_unknown  -- a code was given and the corpus has nothing
-#                         under it. The answer is real and grounded,
-#                         but grounded in whatever else was
-#                         semantically nearest, which may be a
-#                         different chemical entirely.
+#                         under it. Only the regulations are retrieved;
+#                         other substances' safety data is deliberately
+#                         withheld rather than offered as the nearest
+#                         analogue. See _regulations_only().
 #   substance_unmapped -- no code was given, because the detection side
 #                         could not map what it saw to one. Same
-#                         fallback as above, different cause: nobody
+#                         handling as above, different cause: nobody
 #                         claimed a code and was wrong, the claim was
 #                         never made.
 #   unavailable        -- no index. Ungrounded; grounded is false.
@@ -339,11 +339,45 @@ def retrieve(substance_code, substance_name, incident_type, top_k=DEFAULT_TOP_K)
     ranked = [chunks[i] for i in ids[0] if i != -1]
 
     if not substance_code:
-        return ranked[:top_k], RETRIEVAL_UNMAPPED
+        return _regulations_only(ranked, top_k), RETRIEVAL_UNMAPPED
 
     selected, matched = _select(ranked, substance_code, top_k)
 
-    return selected, (RETRIEVAL_MATCHED if matched else RETRIEVAL_UNKNOWN)
+    if matched:
+        return selected, RETRIEVAL_MATCHED
+
+    return _regulations_only(ranked, top_k), RETRIEVAL_UNKNOWN
+
+
+def _regulations_only(ranked, top_k):
+    """
+    The chunks to use when no SDS in the corpus describes this
+    substance: the regulations, and nothing else.
+
+    Withholding the other substances' safety data is the point. Left
+    in, those excerpts were cited as the source of advice they did not
+    contain -- measured 2026-09-04, a toluene spill returned sound
+    advice about eliminating ignition sources while citing the
+    ammonia, caustic soda, chlorine and sulphuric acid sheets, none of
+    which mention ignition sources at all. The model had answered from
+    its own training and the response attributed it to four documents.
+
+    That is worse than an obviously wrong answer, because nothing in
+    the response looks wrong: a reader would have to open all four
+    cited files and check them against every claim to notice. The
+    prompt already forbade exactly this ("Base every instruction ONLY
+    on the excerpts above") and was ignored, which is why the fix is
+    structural rather than another instruction -- there is now no
+    wrong-substance document available to mis-cite.
+
+    Regulations stay because they are true regardless of substance:
+    raise the alarm, account for people, keep untrained responders out.
+    A site whose corpus holds no regulations at all gets an empty list
+    here, and the response reports grounded=false with no sources,
+    which is the honest answer rather than a fabricated one.
+    """
+
+    return [chunk for chunk in ranked if chunk.get("doc_type") == "regulation"][:top_k]
 
 
 # ============================================================
@@ -369,7 +403,9 @@ def _format_excerpts(chunks):
     return "\n\n".join(blocks)
 
 
-def _build_prompt(bay_id, substance_code, substance_name, incident_type, chunks):
+def _build_prompt(
+    bay_id, substance_code, substance_name, incident_type, chunks, retrieval_mode
+):
     """
     A JSON-only instruction, grounded in the retrieved excerpts.
 
@@ -386,7 +422,7 @@ def _build_prompt(bay_id, substance_code, substance_name, incident_type, chunks)
     finishes listening to.
     """
 
-    if chunks:
+    if chunks and retrieval_mode == RETRIEVAL_MATCHED:
         grounding = (
             "Reference excerpts from the site's safety documents:\n\n"
             "%s\n\n" % _format_excerpts(chunks)
@@ -399,6 +435,35 @@ def _build_prompt(bay_id, substance_code, substance_name, incident_type, chunks)
             "correct.\n"
             "- If the excerpts do not cover something the responder "
             "would need, say so in a step rather than filling the gap.\n"
+        )
+
+    elif chunks:
+        # Unknown or unmapped substance. There ARE excerpts -- the
+        # regulations -- so saying there are none would be a lie to the
+        # model, and telling it to ground substance-specific advice in
+        # documents that describe no substance would be an instruction
+        # it cannot follow. Say exactly what is and is not available.
+        grounding = (
+            "No safety data sheet is available for this substance. The "
+            "excerpts below are general workplace safety regulations "
+            "that apply regardless of which substance is involved -- "
+            "they do NOT describe this one:\n\n"
+            "%s\n\n" % _format_excerpts(chunks)
+        )
+
+        sourcing_rule = (
+            "- No substance-specific safety data is available here. Give "
+            "conservative, general-purpose emergency guidance only, and "
+            "keep it cautious.\n"
+            "- Do NOT state specific hazards, reactions, incompatibilities "
+            "or first-aid procedures for this substance. You do not have "
+            "a source for them, and a confident guess is the dangerous "
+            "answer here.\n"
+            "- Say plainly, in the first step, that no safety data sheet "
+            "is available and the substance must be treated as unknown.\n"
+            "- The regulation excerpts above may be used for duties that "
+            "hold regardless of substance: raising the alarm, evacuating, "
+            "accounting for people, and keeping untrained responders out.\n"
         )
 
     else:
@@ -576,7 +641,8 @@ def assess(
     )
 
     prompt = _build_prompt(
-        bay_id, substance_code, substance_name, incident_type, chunks
+        bay_id, substance_code, substance_name, incident_type, chunks,
+        retrieval_mode,
     )
 
     payload, provider = generate_structured_response(prompt)
