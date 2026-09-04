@@ -345,62 +345,86 @@ Four values. Three of them produce a grounded answer, and they are
 | Value | Meaning | `grounded` |
 |---|---|---|
 | `substance_matched` | A code was given and the corpus has documents for it. The SDS excerpts are about the substance you named. | `true` |
-| `substance_unknown` | A code was given and the corpus has **nothing** under it. Fell back to unfiltered semantic search. | `true` |
-| `substance_unmapped` | `substance_code` was `null`. Same fallback, different cause. | `true` |
+| `substance_unknown` | A code was given and the corpus has **nothing** under it. **Only regulations are retrieved** — no other substance's SDS. | `true` |
+| `substance_unmapped` | `substance_code` was `null`. Same handling, different cause. | `true` |
 | `unavailable` | No index. Answer comes from the model's general knowledge. | `false` |
 
-`grounded` is exactly `retrieval_mode != "unavailable"`. It is kept as a
-separate boolean so existing callers do not break; new callers should
-read `retrieval_mode`, which distinguishes cases `grounded` cannot.
+**`grounded` is exactly `retrieved_sources` being non-empty.** That is
+the guarantee to rely on, and it is checkable directly from the body.
 
-**`substance_unknown` is the one that will hurt you**, and it is
-deceptive in a way that is worth looking at closely. The response looks
-completely normal — 200, `grounded: true`, real source filenames,
-confident steps. This is a real captured response for `substance_code:
-"TOLUENE"`, which the corpus has no sheet for:
+Its relationship to `retrieval_mode` is one-directional: `unavailable`
+always means `grounded: false`, but `grounded: false` does **not** imply
+`unavailable`. A corpus containing no regulation documents would answer
+an unknown substance with no chunks at all — correctly reporting
+`substance_unknown` and `grounded: false` together.
+
+**`substance_unknown` deliberately gives you less.** No other
+substance's safety data is offered as an analogue — only the general
+regulations, which hold whatever the chemical is. A real captured
+response for `substance_code: "TOLUENE"`, which the corpus has no sheet
+for:
 
 ```json
 {
-  "severity": "high",
+  "severity": "critical",
   "steps": [
-    "Evacuate the immediate area and isolate the spill.",
-    "Eliminate all ignition sources in the vicinity.",
-    "Contain the spill with dry inert absorbent such as sand, preventing entry to drains.",
-    "Recover the absorbent and spilled material into a labelled container while wearing protective suit, gloves, boots and full-face respirator.",
-    "Notify control and await professional cleanup."
+    "Declare that no safety data sheet is available and treat the substance as unknown",
+    "Activate the emergency alarm and notify the response team",
+    "Evacuate all personnel from Bay 02 using clear, unobstructed exits",
+    "Isolate the area by closing ventilation and securing doors without locking them from the inside",
+    "Permit entry only for trained responders equipped with full-face pressure-demand SCBA",
+    "Await arrival of qualified hazmat personnel before any cleanup"
   ],
-  "contraindication": "Do not use water to wash or dilute the spilled toluene.",
-  "spoken_alert": "Evacuate BAY 02, isolate the spill, and stop all ignition sources now.",
+  "contraindication": "Do not enter the spill area without proper self-contained breathing apparatus and training.",
+  "spoken_alert": "Attention all personnel: unknown chemical spill in Bay 02, evacuate immediately, avoid entry, await emergency instructions.",
   "spoken_alert_translated": false,
   "substance_name": "Toluene",
   "grounded": true,
   "retrieval_mode": "substance_unknown",
   "retrieved_sources": [
-    "sds_ammonia.md",
-    "sds_caustic_soda.md",
-    "sds_chlorine.md",
-    "sds_sulphuric_acid.md"
+    "reg_factories_act_excerpts.md",
+    "reg_osha_excerpts.md"
   ],
   "generation_provider": "groq",
-  "latency_ms": 77329.79
+  "latency_ms": 75853.59
 }
 ```
 
-Read `retrieved_sources` there: ammonia, caustic soda, chlorine and
-sulphuric acid. **Not one of them is toluene**, and not one of them
-mentions ignition sources — yet the advice about ignition sources is
-sound, because the model supplied it from its own training rather than
-from the excerpts it was given. So the answer is plausible *and*
-`retrieved_sources` is a list of four documents that did not produce it.
+Note what it does not contain: no hazard chemistry, no first-aid
+procedure, no reactivity claim. The first step says outright that no
+safety data sheet is available. `retrieved_sources` lists only the two
+regulation files, which really are what the answer was built from.
 
-That is the trap. `substance_unknown` does not reliably look wrong. It
-may read as competent substance-specific guidance while being
-ungrounded in everything it cites — and on a different substance, or a
-different day, the model may instead lean on those wrong-substance
-excerpts and tell you to treat a flammable liquid like a corrosive.
-Nothing in the body distinguishes those two cases. **Do not present
-`substance_unknown` output as substance-specific guidance, and do not
-cite `retrieved_sources` as its provenance.**
+### Why the nearest analogous chemical is deliberately withheld
+
+Until 2026-09-04 this mode retrieved the semantically closest SDS
+instead, on the theory that a similar chemical is better than nothing.
+Measured, it was worse. The same toluene request returned confident,
+correct-sounding advice about eliminating ignition sources while citing
+the ammonia, caustic soda, chlorine and sulphuric acid sheets — **not
+one of which mentions ignition sources.** The model had answered from
+its own training and the response attributed it to four documents that
+did not contain it.
+
+That is worse than an obviously wrong answer. Nothing in the body looks
+wrong; catching it means opening all four cited files and checking them
+against every claim. And the failure runs the other way too: on a
+different substance the model may instead *use* those excerpts, and
+advise treating a flammable liquid as a corrosive.
+
+The prompt already forbade exactly this, and was ignored — so the fix
+is structural rather than another instruction. There is now no
+wrong-substance document available to mis-cite. The cost is real: a
+caustic-soda irrigation procedure is sometimes reasonable for an
+unknown corrosive, and that context is gone. It was given up because
+the response cannot tell you which of those two cases you are in, and a
+citation to a document that does not describe the substance is worse
+than no citation at all.
+
+**Still do not present `substance_unknown` output as
+substance-specific guidance.** `retrieved_sources` is now honest about
+what was supplied to the model, but it remains no proof of where any
+particular sentence came from.
 
 `substance_unmapped` carries the same caveat with a different cause —
 nobody claimed a code and got it wrong, the claim was never made:
@@ -409,25 +433,24 @@ nobody claimed a code and got it wrong, the claim was never made:
 {
   "severity": "high",
   "steps": [
-    "Raise the alarm and begin evacuation moving cross-wind then up-wind.",
-    "Establish an isolation zone of at least 100 metres radius around the drum.",
-    "Only responders equipped with self-contained breathing apparatus and protective clothing may approach.",
-    "Sweep the dry white solid into a labelled container, avoiding dust; do not wash with water yet.",
-    "Prevent any material from entering drains, sewers or watercourses."
+    "Acknowledge that no safety data sheet is available; treat the white solid as an unknown hazardous material.",
+    "Evacuate all personnel from Bay-11 and establish a safe perimeter; keep untrained responders away.",
+    "Notify the supervisor or person in charge and contact the nearest Inspector immediately.",
+    "Activate the facility alarm and commence building evacuation following fire-escape procedures.",
+    "If anyone is exposed, use the nearest eyewash or emergency drench station within ten seconds."
   ],
-  "contraindication": "Do not apply water directly to the leaking drum.",
-  "spoken_alert": "All personnel evacuate cross-wind, then up-wind, and await further instructions!",
+  "contraindication": "Do not attempt to open or handle the leaking drum without qualified hazardous-material personnel.",
+  "spoken_alert": "Danger: unknown chemical leak in Bay Eleven, evacuate immediately and stay clear of the drum!",
   "spoken_alert_translated": false,
   "substance_name": "Unidentified white crystalline solid",
   "grounded": true,
   "retrieval_mode": "substance_unmapped",
   "retrieved_sources": [
-    "sds_ammonia.md",
-    "sds_caustic_soda.md",
-    "sds_chlorine.md"
+    "reg_factories_act_excerpts.md",
+    "reg_osha_excerpts.md"
   ],
   "generation_provider": "groq",
-  "latency_ms": 6144.49
+  "latency_ms": 61655.45
 }
 ```
 
@@ -442,13 +465,15 @@ documents for four of them.**
 
 Note the shape of that gap: six of the seven unsupported codes are
 **flammables**, and all four supported sheets are toxics and
-corrosives. A petrol or LPG incident will retrieve eye-irrigation and
-evacuation procedure, because that is the closest thing present.
+corrosives. A petrol or LPG incident therefore gets no substance
+guidance at all — evacuation and duty-of-care procedure only — rather
+than corrosive-handling advice dressed up as fire advice.
 
 This is a property of the sample corpus, not a defect to be worked
 around in a client. It resolves when real source documents replace the
-illustrative set — until then, seven of eleven codes retrieve by
-unfiltered fallback and say so in `retrieval_mode`.
+illustrative set — until then, seven of eleven codes come back as
+`substance_unknown`, grounded in the regulations only, with no
+substance-specific hazard information at all.
 
 ### The corpus is illustrative, not real
 
