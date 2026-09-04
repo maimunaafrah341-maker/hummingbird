@@ -33,6 +33,7 @@ No auth, no body.
   "status": "ok",
   "tiers": { "script": true, "semantic": null },
   "retrieval": null,
+  "generation": { "featherless_configured": true, "last_provider": null },
   "languages": ["bn", "en", "hi", "te", "ur"]
 }
 ```
@@ -42,6 +43,8 @@ No auth, no body.
 | `tiers.script` | Always `true`. Unicode-range detection needs nothing. |
 | `tiers.semantic` | `true` loaded, `false` cannot load here, **`null` nothing has needed it yet** |
 | `retrieval` | The FAISS index behind `/incident`: `true` loaded, `false` cannot load here, **`null` nothing has needed it yet** |
+| `generation.featherless_configured` | Whether a Featherless key is present. Says nothing about whether it works |
+| `generation.last_provider` | Which provider actually answered last: `"featherless"`, `"groq"`, or **`null` nothing has generated yet** |
 
 `null` is not a bug. The embedding model loads lazily, so before the
 first Latin-script request there is genuinely no answer — reporting
@@ -79,6 +82,27 @@ before an operator does. Note that checking `/health` never *triggers*
 a load; it reports what the service has already discovered, so on a
 freshly started process the honest answer is `null` until something
 has actually asked for an assessment.
+
+**`generation` answers two different questions, and the second is the
+one that matters.** `featherless_configured` only says a key is
+present. `last_provider` says who actually answered. Featherless is
+attempted first on every `/incident` request, so:
+
+```json
+{
+  "status": "ok",
+  "tiers": { "script": true, "semantic": true },
+  "retrieval": true,
+  "generation": { "featherless_configured": true, "last_provider": "groq" },
+  "languages": ["bn", "en", "hi", "te", "ur"]
+}
+```
+
+means the key is there, was tried, and **was rejected** — the service
+is working perfectly and has quietly stopped using its primary provider.
+That state is invisible in an individual successful response unless you
+read `generation_provider`, and invisible in `/health` unless you read
+this field, which is why both exist.
 
 ---
 
@@ -223,13 +247,13 @@ worth surfacing rather than silently reinterpreting.
 {
   "severity": "high",
   "steps": [
-    "Flush affected area with large quantities of running water for at least 30 minutes.",
-    "Remove all contaminated clothing, footwear, and jewellery while flushing.",
-    "Continue flushing until the slippery, soapy feel of the skin has gone.",
-    "Seek immediate medical attention."
+    "Put on full chemical protective clothing and a self-contained breathing apparatus.",
+    "Remove the casualty's contaminated clothing, footwear and jewellery.",
+    "Irrigate the forearm with a large, continuous flow of water for at least 30 minutes, continuing until the skin no longer feels slippery.",
+    "Keep the area wet, monitor the casualty, and arrange immediate medical transport."
   ],
-  "contraindication": "Do not attempt to neutralise the caustic with acidic solutions.",
-  "spoken_alert": "Immediate water rinse required for sodium hydroxide burn in BAY-04. Seek medical help now.",
+  "contraindication": "Do not attempt to neutralise the burn with vinegar or any acidic solution.",
+  "spoken_alert": "Emergency! Caustic soda spill on forearm - remove clothing, flood with water, do not apply acid, seek medical help now.",
   "spoken_alert_translated": false,
   "substance_name": "Sodium hydroxide (50% solution)",
   "grounded": true,
@@ -238,9 +262,20 @@ worth surfacing rather than silently reinterpreting.
     "reg_osha_excerpts.md",
     "sds_caustic_soda.md"
   ],
-  "latency_ms": 16432.1
+  "generation_provider": "groq",
+  "latency_ms": 76486.75
 }
 ```
+
+That `generation_provider: "groq"` and the 76-second latency are both
+real and belong together: Featherless was attempted first, hit its 60 s
+budget without responding, and Groq answered in the remaining ~16 s.
+See `generation_provider` below.
+
+**The other captured examples in this section predate the
+`generation_provider` field** and were not re-run for it. Every
+`/incident` response carries it; the older bodies below simply were not
+recaptured after it was added.
 
 | Field | Meaning |
 |---|---|
@@ -253,7 +288,59 @@ worth surfacing rather than silently reinterpreting.
 | `grounded` | Whether the answer was built from retrieved documents. **Read this** |
 | `retrieval_mode` | How the corpus was searched, and how far to trust the sources. **Read this** |
 | `retrieved_sources` | The corpus files the answer was drawn from. Empty when `grounded` is false |
+| `generation_provider` | Which model answered: `"featherless"` or `"groq"`. See below |
 | `latency_ms` | Server-side work only. Dominated by the model call |
+
+### `generation_provider`: Featherless first, Groq behind it
+
+Structured generation tries **Featherless (`Qwen/Qwen2.5-72B-Instruct`)
+first on every request**, and falls back to **Groq
+(`openai/gpt-oss-120b`)** if that attempt fails for any reason — a
+rejected key, a rate limit, a watchdog timeout, or two unparseable
+answers in a row. Both providers get identical treatment, including one
+correction retry on malformed JSON.
+
+`generation_provider: "groq"` therefore does not mean "Groq was
+chosen". It means **Featherless was tried and failed**. A deployment
+that returns it on every request is one whose primary provider is
+never actually being used, and the response is otherwise
+indistinguishable from a healthy one. Captured on a deployment with a
+deliberately invalid Featherless key:
+
+```json
+{
+  "severity": "critical",
+  "steps": [
+    "Raise the alarm and evacuate personnel, moving crosswind first then upwind from the leak",
+    "Establish a 100 m isolation zone and deny entry to anyone without self-contained breathing apparatus; evacuate all low-lying areas",
+    "Account for all personnel by name and report the headcount",
+    "Only chlorine-trained responders in SCBA and protective clothing may approach; if safe, shut off the supply valve at the source, do not attempt a repair",
+    "Prevent the gas from entering drains or sewers and keep the release contained"
+  ],
+  "contraindication": "Do not enter the leak area without self-contained breathing apparatus",
+  "spoken_alert": "Evacuate immediately, move crosswind then upwind, stay out of the leak area, and await further instructions.",
+  "spoken_alert_translated": false,
+  "substance_name": "Chlorine gas",
+  "grounded": true,
+  "retrieval_mode": "substance_matched",
+  "retrieved_sources": [
+    "reg_factories_act_excerpts.md",
+    "sds_chlorine.md"
+  ],
+  "generation_provider": "groq",
+  "latency_ms": 16977.3
+}
+```
+
+Nothing else in that body differs from a Featherless-generated one. If
+it matters to you which model answered — and for this project it does —
+`generation_provider` is the only field that says so, with
+`/health`'s `generation.last_provider` as the at-a-glance equivalent.
+
+**503 now means no provider at all.** A missing or rejected Featherless
+key no longer fails the request; it falls through to Groq. You will
+only see a 503 when neither `FEATHERLESS_API_KEY` nor `GROQ_API_KEY` is
+usable.
 
 ### `retrieval_mode`: how much the sources are worth
 
@@ -499,7 +586,7 @@ better outcome. Whitespace and letter case are normalised, because
 | **405** | Wrong method (e.g. `GET /detect`) | FastAPI default |
 | **422** | Missing/mistyped field, malformed JSON | FastAPI validation detail |
 | **502** | `/incident`: model returned unusable output | `{"detail": "severity was 'moderate'; expected exactly one of low, medium, high, critical"}` |
-| **503** | `/incident`: no `FEATHERLESS_API_KEY` | `{"detail": "FEATHERLESS_API_KEY is not set -- structured generation is unavailable."}` |
+| **503** | `/incident`: no provider configured at all | `{"detail": "No structured-generation provider is configured -- set FEATHERLESS_API_KEY or GROQ_API_KEY."}` |
 | **503** | `/incident`: provider unreachable or rate limited | `{"detail": "structured generation provider returned 429"}` |
 | **503** | `/incident`: provider sent a malformed body | `{"detail": "structured generation provider unreachable (JSONDecodeError)"}` |
 | **500** | Unhandled server error | `{"error": "internal_error", "request_id": "..."}` |
@@ -543,10 +630,19 @@ seconds**, plus a one-time ~22 s embedding-model load on the first
 request of a process. A 30-second client default will time out on
 ordinary successful requests.
 
-The model call is bounded at **90 seconds total** by a watchdog, and
-that bound covers both the first attempt and the correction retry
-together — a slow first attempt shortens the retry rather than doubling
-the ceiling. If the budget runs out you get a **503**, not a hang.
+Model calls are bounded at **90 seconds total** by a watchdog, split
+across the two providers: **60 s for Featherless, 30 s for Groq**. Each
+provider's budget covers its first attempt *and* its correction retry
+together, so a slow first attempt shortens that provider's retry rather
+than doubling the ceiling — and a Featherless attempt that burns its
+full 60 s cannot eat the time Groq needs to rescue the request. Adding
+the fallback did not raise the ceiling; it re-divided the 90 s that was
+already there. If the whole budget runs out you get a **503**, not a
+hang.
+
+Measured 2026-09-04 against a provider that accepted the connection and
+never replied: the watchdog fired at **60.0 s**, Groq answered in
+**0.9 s**, total **60.9 s**.
 
 That watchdog exists because the underlying timeout does not do what it
 looks like it does: the provider call is configured with a 60-second
@@ -579,14 +675,13 @@ returned 429`; roughly 45 seconds of spacing was reliable. If the kiosk
 can issue assessments faster than that, it needs to queue them or back
 off on 503 — this is a quota, so an immediate retry makes it worse.
 
-**`/incident` has no failover; `/translate` does.** Translation walks
-Groq → Gemini → OpenRouter and survives any one of them being down.
-Structured generation goes to Featherless and nowhere else, by design —
-one provider in a known JSON dialect is easier to hold to a strict
-output contract than four in four house styles. The tradeoff is that a
-Featherless outage takes `/incident` down completely while the rest of
-the service keeps working. Degrade the kiosk accordingly rather than
-assuming the whole API is down.
+**`/incident` has a two-provider fallback; `/translate` has three.**
+Structured generation tries Featherless then Groq. Translation walks
+Groq → Gemini → OpenRouter and is unchanged. The two paths are
+deliberately independent: `/translate`'s behaviour is documented against
+the three-tier chain and nothing in the structured path alters it. A
+Featherless outage no longer takes `/incident` down — it shows up as
+`generation_provider: "groq"`, which you should be watching for anyway.
 
 **Read `grounded` on every response, not `/health` once at startup.**
 `/health` does report the index state as `retrieval`, and it is worth
