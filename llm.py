@@ -17,9 +17,25 @@ simply broken.
 Configure with any subset of GROQ_API_KEY, GEMINI_API_KEY and
 OPENROUTER_API_KEY in the environment. Providers with no key are
 skipped, so one key is enough to run.
+
+    generate_structured_response(prompt) -> dict
+
+A separate entry point for callers that need a JSON object back rather
+than prose. It goes to Featherless (Qwen2.5-72B-Instruct) and nowhere
+else -- no failover chain -- and retries once with a correction prompt
+if the model returns something that will not parse. Needs
+FEATHERLESS_API_KEY.
+
+The two functions are deliberately independent. generate_response()'s
+three-tier behaviour is what /translate is documented against, so
+nothing in the structured path is permitted to alter it, and the
+structured path's single-provider design is not allowed to leak back
+into the prose one.
 """
 
+import json
 import os
+import re
 
 import requests
 from dotenv import load_dotenv
@@ -234,3 +250,186 @@ def generate_response(prompt):
     print("=" * 70)
 
     raise last_error
+
+
+# ============================================================
+# STRUCTURED JSON GENERATION (Featherless)
+# ============================================================
+#
+# Everything below is additive. Nothing above this line is touched by
+# it, which is the point: /translate is documented against
+# generate_response()'s exact three-tier behaviour, and a second caller
+# with different needs must not be able to change what the first one
+# does.
+#
+# Unlike generate_response(), this path has no failover. That is a
+# deliberate decision rather than an oversight: a single provider
+# answering in a known JSON dialect is easier to hold to a strict
+# output contract than four providers with four house styles, and a
+# structured response that arrives in the wrong shape is not more
+# useful than one that does not arrive. The tradeoff is real and it
+# belongs in the API contract, not hidden here -- a Featherless outage
+# takes the structured endpoint down, while /translate keeps running on
+# its three tiers.
+
+FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY")
+FEATHERLESS_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+FEATHERLESS_BASE_URL = "https://api.featherless.ai/v1"
+
+# Longer than the 30s default used above. A 72B model on a shared
+# serverless tier is slower to first token than the small chat models
+# the prose path uses, and a timeout that fires while the model is
+# still writing produces the same user-visible outcome as an outage
+# while wasting the generation that was nearly finished.
+FEATHERLESS_TIMEOUT = 60
+
+# How much of a bad response to quote back to the model when asking it
+# again. Enough that it can see what it did wrong, capped so that a
+# model which answered with three pages of prose does not produce a
+# retry prompt larger than its own context budget.
+CORRECTION_ECHO_CHARS = 2000
+
+
+def _extract_json(text):
+    """
+    Parse a model's response into a dict, or raise ValueError.
+
+    Models that have been told to return only JSON return only JSON
+    most of the time. The rest of the time they wrap it in ```json
+    fences, or open with "Here is the JSON you requested:", or add a
+    sentence of commentary after the closing brace. None of that is
+    worth a retry when the JSON itself is sitting right there, so this
+    strips the two common wrappers before giving up.
+
+    Raises rather than returning None so the caller can distinguish
+    "the model produced something unusable" -- worth one more attempt
+    -- from a transport failure, which is not.
+    """
+
+    if not text or not text.strip():
+        raise ValueError("empty response")
+
+    candidate = text.strip()
+
+    # ```json ... ``` or a bare ``` ... ``` fence.
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL)
+
+    if fenced:
+        candidate = fenced.group(1).strip()
+
+    try:
+        parsed = json.loads(candidate)
+
+    except ValueError:
+
+        # Second attempt: slice from the first brace to the last one,
+        # which recovers the object from surrounding prose.
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+
+        if start == -1 or end == -1 or end < start:
+            raise ValueError("no JSON object found in the response")
+
+        try:
+            parsed = json.loads(candidate[start:end + 1])
+
+        except ValueError as e:
+            raise ValueError("response was not valid JSON (%s)" % e)
+
+    # A bare list or string is valid JSON and still not what any caller
+    # of this function asked for.
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "expected a JSON object, got %s" % type(parsed).__name__
+        )
+
+    return parsed
+
+
+def generate_structured_response(prompt):
+    """
+    Send a prompt to Featherless and return the parsed JSON object it
+    replied with.
+
+    One retry, and only for the one failure mode a retry can fix. If
+    the response does not parse, the model is asked again with its own
+    invalid output quoted back to it and a blunter instruction --
+    which works often enough to be worth a second call, because the
+    usual cause is a model adding conversational framing rather than a
+    model that cannot produce the shape at all.
+
+    A transport failure is NOT retried here. A timeout or a 5xx means
+    the provider is unwell, and immediately asking it again is how a
+    slow outage becomes a slower one; that decision belongs to the
+    caller, which knows whether anyone is still waiting.
+
+    Guarantees a dict. Says nothing about which keys are in it --
+    this module does not know what was asked for, and the caller that
+    wrote the prompt is the only thing that can validate the answer
+    against it.
+
+    Raises RuntimeError if no key is configured, ValueError if the
+    model failed to produce JSON twice, and whatever requests raises
+    on a transport failure.
+    """
+
+    if not FEATHERLESS_API_KEY:
+        raise RuntimeError(
+            "FEATHERLESS_API_KEY is not set -- structured generation is "
+            "unavailable."
+        )
+
+    raw = _call_openai_compatible_api(
+        FEATHERLESS_BASE_URL,
+        FEATHERLESS_API_KEY,
+        FEATHERLESS_MODEL,
+        prompt,
+        timeout=FEATHERLESS_TIMEOUT,
+    )
+
+    try:
+        return _extract_json(raw)
+
+    except ValueError as e:
+        print(
+            "[Featherless] %s failed to return JSON (%s) -- retrying once "
+            "with a correction prompt" % (FEATHERLESS_MODEL, e),
+            flush=True,
+        )
+
+    corrected = (
+        "%s\n\n"
+        "---\n\n"
+        "Your previous output was NOT valid JSON. This is what you "
+        "returned:\n\n"
+        "%s\n\n"
+        "Return ONLY a single valid JSON object. No markdown fences, no "
+        "commentary before or after it, no explanation, no apology. The "
+        "first character of your response must be { and the last must "
+        "be }."
+        % (prompt, raw[:CORRECTION_ECHO_CHARS])
+    )
+
+    retried = _call_openai_compatible_api(
+        FEATHERLESS_BASE_URL,
+        FEATHERLESS_API_KEY,
+        FEATHERLESS_MODEL,
+        corrected,
+        timeout=FEATHERLESS_TIMEOUT,
+    )
+
+    try:
+        return _extract_json(retried)
+
+    except ValueError as e:
+        print("\n" + "=" * 70)
+        print("STRUCTURED GENERATION ERROR (Featherless returned invalid "
+              "JSON twice)")
+        print("=" * 70)
+        print(retried[:CORRECTION_ECHO_CHARS])
+        print("=" * 70)
+
+        raise ValueError(
+            "%s did not return valid JSON after a correction retry (%s)"
+            % (FEATHERLESS_MODEL, e)
+        )
