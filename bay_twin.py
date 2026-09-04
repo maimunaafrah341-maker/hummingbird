@@ -875,6 +875,13 @@ function handle(e){
       addEntry("decision", "Reconfirmed — " + e.zone,
                e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at);
 
+    } else if (e.action === "fire"){
+      if (bay.el.classList.contains("offline"))
+        setState(bay, "monitoring", "Monitoring");
+      popHold(bay, "confirmed");
+      addEntry("decision", "Acting now — " + e.zone,
+               e.violation + " · " + conf(e.confidence) + " · " + (e.reason || ""), e.at);
+
     } else if (e.action === "ignored"){
       addEntry("decision", "Below floor — " + e.zone,
                e.violation + " · " + conf(e.confidence), e.at);
@@ -1082,18 +1089,70 @@ def demo(port=8010, open_browser=True):
 
     threading.Thread(target=script, daemon=True).start()
 
-    print("\n  Bay Twin demo -> %s\n" % url)
-    print("  The amber dots are the point: a borderline detection held,")
-    print("  then dropped. That is the system declining to cry wolf.\n")
+    _banner(url)
 
     if open_browser:
-        try:
-            import webbrowser
-            threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-        except Exception:
-            pass
+        _open_when_ready(port, url)
 
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+
+
+def _banner(url):
+    """Print the URL where it cannot be missed, and flush it."""
+
+    print("", flush=True)
+    print("  " + "=" * 58, flush=True)
+    print("  Bay Twin is at:  %s" % url, flush=True)
+    print("  " + "=" * 58, flush=True)
+    print("", flush=True)
+    print("  Open that FULL address -- the port and the /twin path both",
+          flush=True)
+    print("  matter. Plain 127.0.0.1 is a different server on port 80,",
+          flush=True)
+    print("  which is why it shows a blank page.", flush=True)
+    print("", flush=True)
+
+
+def _open_when_ready(port, url, timeout=20.0):
+    """
+    Open a browser once the port actually accepts a connection.
+
+    A fixed delay races uvicorn's startup: on a slow first import the
+    tab opens before the server is listening, the browser shows its own
+    error page, and nothing ever retries.
+    """
+
+    import socket
+
+    def wait():
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            probe = socket.socket()
+            probe.settimeout(0.4)
+
+            try:
+                probe.connect(("127.0.0.1", port))
+                break
+            except Exception:
+                time.sleep(0.25)
+            finally:
+                try:
+                    probe.close()
+                except Exception:
+                    pass
+        else:
+            print("  server did not come up in %.0fs -- open %s by hand"
+                  % (timeout, url), flush=True)
+            return
+
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            print("  could not open a browser -- go to %s" % url, flush=True)
+
+    threading.Thread(target=wait, daemon=True).start()
 
 
 def serve(port=8010):
@@ -1105,8 +1164,10 @@ def serve(port=8010):
     app = FastAPI(title="Bay Twin")
     app.include_router(build_router())
 
-    print("\n  Bay Twin -> http://127.0.0.1:%d/twin" % port)
-    print("  Point the trigger at it: --twin http://127.0.0.1:%d\n" % port)
+    _banner("http://127.0.0.1:%d/twin" % port)
+    print("  Point the trigger at it: --twin http://127.0.0.1:%d" % port,
+          flush=True)
+    print("", flush=True)
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
