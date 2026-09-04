@@ -4,6 +4,7 @@ not the one hosting it.
 
     python smoke_test.py https://your-service.onrender.com
     python smoke_test.py https://your-service.onrender.com --key YOUR_API_KEY
+    python smoke_test.py https://your-service.onrender.com --incident
 
 Exists because "the container started" and "the service works" are
 different claims, and only the second one is worth making. Running the
@@ -18,6 +19,16 @@ first Latin-script request pays the model load (~25s), or returns "en"
 with semantic_tier_used false on a deployment built without the model.
 Both are passes -- the test asserts the service is HONEST about which
 tier it has, not that it has both.
+
+/incident's input validation is checked by default, because rejecting a
+bad request costs nothing -- validation runs before any model call. The
+one check that actually asks for an assessment is behind --incident,
+and is off by default on purpose. It spends a real Featherless
+generation (8-42s measured, bounded at 90s), and the account is limited
+by tokens per minute: two assessments inside a minute return 429, so a
+gate that ran one on every deploy would fail spuriously whenever two
+deploys landed close together. A deploy gate that is flaky for reasons
+unrelated to the deploy is worse than one that checks less.
 """
 
 import json
@@ -78,6 +89,8 @@ def main():
     if "--key" in sys.argv:
         key = sys.argv[sys.argv.index("--key") + 1]
 
+    run_incident = "--incident" in sys.argv
+
     print("Testing %s\n" % base)
 
     # -- reachability ------------------------------------------------
@@ -132,6 +145,34 @@ def main():
     status, body = call(base, "/nope", key)
     check("unknown route -> 404", status == 404, "status %s" % status)
 
+    # -- /incident input validation: free, no model call ------------
+    #
+    # These stay in the default run because validation happens before
+    # anything expensive: a rejected request never reaches the
+    # retriever or the provider, so this costs a round trip and
+    # nothing else.
+
+    incident_body = {
+        "bay_id": "BAY-04",
+        "substance_code": "CL2",
+        "incident_type": "gas leak",
+        "target_lang": "en",
+    }
+
+    status, body = call(
+        base, "/incident", key, "POST", dict(incident_body, bay_id="  ")
+    )
+    check("incident empty bay_id -> 400", status == 400, str(body))
+
+    status, body = call(
+        base, "/incident", key, "POST", dict(incident_body, target_lang="fr")
+    )
+    check(
+        "incident bad target_lang -> 400",
+        status == 400 and "must be one of" in str(body),
+        str(body),
+    )
+
     # -- translation (needs a provider key on the server) ------------
     status, body = call(
         base, "/translate", key, "POST",
@@ -183,6 +224,89 @@ def main():
         health_after.get("tiers", {}).get("semantic") is not None,
         "semantic: %s -> %s" % (semantic, health_after.get("tiers", {}).get("semantic")),
     )
+
+    # -- a real assessment, last and only on request -----------------
+    #
+    # The most expensive check in the file by a wide margin: a real
+    # generation, billed, and slow. See the module docstring for why it
+    # is not in the default run.
+    #
+    # Passes on a 200 with a well-formed body OR on a clean 503, for
+    # the same reason the translation check above accepts either
+    # outcome: a deployment with no FEATHERLESS_API_KEY, or one whose
+    # provider is down or rate-limiting, is not a broken deployment --
+    # it is one that must say so honestly. What this rejects is a 500,
+    # a hang, or a 200 that omits fields the contract promises.
+
+    if run_incident:
+
+        print("\n  (--incident: one real assessment, 8-90s, billed)")
+
+        started = time.time()
+
+        status, body = call(
+            base, "/incident", key, "POST", incident_body, timeout=180,
+        )
+
+        incident_ms = (time.time() - started) * 1000
+
+        if status == 200:
+
+            required = [
+                "severity", "steps", "contraindication", "spoken_alert",
+                "spoken_alert_translated", "grounded", "retrieved_sources",
+                "latency_ms",
+            ]
+
+            missing = [field for field in required if field not in body]
+
+            check(
+                "incident returns every documented field",
+                not missing,
+                "missing: %s" % (missing or "none"),
+            )
+
+            check(
+                "incident severity in enum",
+                body.get("severity") in ("low", "medium", "high", "critical"),
+                "severity=%r in %.0fms" % (body.get("severity"), incident_ms),
+            )
+
+            check(
+                "incident steps are usable",
+                isinstance(body.get("steps"), list)
+                and body["steps"]
+                and all(isinstance(s, str) and s.strip() for s in body["steps"]),
+                "%d steps" % len(body.get("steps") or []),
+            )
+
+            # grounded and retrieved_sources have to agree. Sources
+            # with grounded false, or grounded true with nothing cited,
+            # would mean the response is lying about where it came
+            # from -- which is worse than either state on its own.
+            check(
+                "incident grounding is self-consistent",
+                bool(body.get("grounded")) == bool(body.get("retrieved_sources")),
+                "grounded=%s sources=%s"
+                % (body.get("grounded"), body.get("retrieved_sources")),
+            )
+
+        else:
+            check(
+                "incident degrades honestly",
+                status == 503 and isinstance(body, dict) and "detail" in body,
+                "no provider on the server -- %s: %s" % (status, body),
+            )
+
+        # The index state is only knowable after something has asked
+        # for it, so this has to come after the assessment above.
+        status, health_final = call(base, "/health", key)
+
+        check(
+            "health reports retrieval truthfully",
+            "retrieval" in health_final and health_final["retrieval"] is not None,
+            "retrieval: %s" % health_final.get("retrieval"),
+        )
 
     # -- summary -----------------------------------------------------
     print("\n%d passed, %d failed" % (len(passed), len(failed)))
