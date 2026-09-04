@@ -1,0 +1,5 @@
+# Real keys. env.example is the committed template; .env never is.
+.env
+
+__pycache__/
+*.pyc
