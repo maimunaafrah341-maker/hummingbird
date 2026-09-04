@@ -297,6 +297,19 @@ export default function Home() {
   const [incidentType, setIncidentType] = useState<IncidentType>("Spill");
   const [language, setLanguage] = useState("English");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [queuedBehind, setQueuedBehind] = useState(0);
+  // One /incident in flight, ever. `disabled={isSubmitting}` is not
+  // enough on its own: React state lands a render late, so a fast
+  // double-click, a keyboard repeat, or a second tab can still put two
+  // requests on the wire. Measured against the deployed service, six
+  // back-to-back requests had five rejected with 429 -- an abandoned
+  // request keeps consuming the provider's rate limit server-side, so a
+  // race costs the quota even when we stop waiting for it.
+  //
+  // A promise chain rather than a boolean flag: each call waits on the
+  // previous one to settle, whatever it settled as.
+  const inFlight = useRef<Promise<void>>(Promise.resolve());
+  const outstanding = useRef(0);
   const [lockout, setLockout] = useState<IncidentResponse | null>(null);
   const [lockoutFromFallback, setLockoutFromFallback] = useState(false);
 
@@ -418,7 +431,18 @@ export default function Home() {
     }
   }
 
-  async function triggerProtocol() {
+  function triggerProtocol() {
+    // Queue behind whatever is running, and tell the operator we did
+    // rather than dropping the press or racing it. outstanding counts
+    // the in-flight call too, so what is displayed is one less.
+    outstanding.current += 1;
+    setQueuedBehind(outstanding.current - 1);
+    const mine = inFlight.current.then(sendIncident, sendIncident);
+    inFlight.current = mine;
+    return mine;
+  }
+
+  async function sendIncident() {
     setIsSubmitting(true);
     if (!cameraOn) await toggleCamera();
     if (!micOn) await toggleMic();
@@ -455,6 +479,8 @@ export default function Home() {
       console.error("[incident] SHOWING LOCAL DEMO FALLBACK -- these steps did not come from the backend. Set VITE_API_BASE_URL and rebuild.");
     }
 
+    outstanding.current = Math.max(0, outstanding.current - 1);
+    setQueuedBehind(Math.max(0, outstanding.current - 1));
     setIsSubmitting(false);
     setLockoutFromFallback(!live);
     setLockout(response);
@@ -525,7 +551,7 @@ export default function Home() {
             </div>
           </div>
           <div className="selection-summary"><span className="selection-icon"><selectedIncident.icon size={16} /></span><span>Ready to declare <strong>{incidentType.toLowerCase()}</strong> at <strong>{location}</strong></span><span className="summary-line" /></div>
-          <button className="trigger-button" onClick={triggerProtocol} disabled={isSubmitting}>
+          <button className="trigger-button" onClick={triggerProtocol} disabled={isSubmitting || queuedBehind > 0}>
             <span className="trigger-icon" aria-hidden="true">
               <svg className="hazard-symbol" viewBox="0 0 32 28" role="img">
                 <path d="M14.06 2.42a2.25 2.25 0 0 1 3.88 0l12.1 20.93A2.25 2.25 0 0 1 28.1 26.7H3.9a2.25 2.25 0 0 1-1.94-3.35l12.1-20.93Z" fill="currentColor" />
@@ -533,7 +559,11 @@ export default function Home() {
                 <circle cx="16" cy="21.2" r="1.8" fill="#f05a47" />
               </svg>
             </span>
-            <span>{isSubmitting ? "Contacting incident gateway…" : "Trigger breach protocol"}</span>
+            <span>{queuedBehind > 0
+              ? `Processing previous alert… (${queuedBehind} queued)`
+              : isSubmitting
+                ? "Contacting incident gateway…"
+                : "Trigger breach protocol"}</span>
             <span className="trigger-arrow">↗</span>
           </button>
           <p className="panel-footnote">Use only for confirmed or imminent hazards. This action broadcasts to the response network.</p>
