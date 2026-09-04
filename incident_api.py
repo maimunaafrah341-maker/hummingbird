@@ -394,6 +394,47 @@ class IncidentRequest(BaseModel):
     timestamp: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
     language: Optional[str] = Field(default="en", max_length=16)
 
+    # The console's names. It calls these location/substance, and it was
+    # built before this service existed -- measured against the deployed
+    # console, every request it sends returns 400 "bay_id must not be
+    # empty" without these. The console then shows DEMO FALLBACK, which
+    # looks like a frontend fault and is not one.
+    #
+    # Aliased here rather than changed there, because the other
+    # /incident implementation already accepts this shape: a console
+    # that has to know which backend it is talking to is a worse
+    # outcome than two services agreeing to answer the same request.
+    location: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
+    substance: Optional[str] = Field(default=None, max_length=MAX_FIELD_CHARS)
+
+    # Sent by the console, meaningless here, and rejected by pydantic as
+    # an unexpected field if unnamed. Accepted and ignored.
+    media: Optional[dict] = None
+    target_lang: Optional[str] = Field(default=None, max_length=16)
+
+    def resolved_bay(self):
+        return self.bay_id or self.location
+
+    def resolved_substance_name(self):
+        return self.substance_name or self.substance
+
+    def resolved_language(self):
+        """
+        Accepts a code ("te") or a display name ("Telugu").
+
+        The console sends codes now, but it sent names for most of its
+        life and the other backend still accepts them. Cheap to allow.
+        """
+
+        raw = (self.target_lang or self.language or "en").strip()
+        return LANGUAGE_ALIASES.get(raw.lower(), raw.lower())
+
+
+LANGUAGE_ALIASES = {
+    "english": "en", "hindi": "hi", "telugu": "te", "bengali": "bn",
+    "bangla": "bn", "urdu": "ur",
+}
+
 
 class CopilotRequest(BaseModel):
     """
@@ -502,20 +543,23 @@ def incident(request, x_api_key=None):
         raise HTTPException(status_code=400,
                             detail="incident_type must not be empty")
 
-    bay = request.bay_id
+    bay = request.resolved_bay()
 
     if not bay or not bay.strip():
-        raise HTTPException(status_code=400, detail="bay_id must not be empty")
+        raise HTTPException(
+            status_code=400,
+            detail="bay_id (or location) must not be empty")
 
     started = datetime.now(timezone.utc)
     response = assess(incident_type, bay,
-                      request.substance_code, request.substance_name)
+                      request.substance_code, request.resolved_substance_name())
 
     if USE_LLM:
         try:
             response = assess_with_llm(
                 incident_type, bay,
-                request.substance_name or request.substance_code, response)
+                request.resolved_substance_name() or request.substance_code,
+                response)
         except Exception as e:
             # Degrade to the rules tier and say which tier answered. A
             # safety service that returns nothing because a key expired
@@ -525,7 +569,7 @@ def incident(request, x_api_key=None):
     response["latency_ms"] = round(
         (datetime.now(timezone.utc) - started).total_seconds() * 1000, 2)
 
-    response["localization"] = localize_response(response, request.language)
+    response["localization"] = localize_response(response, request.resolved_language())
 
     # The localizer is done with them, and they are not part of the
     # contract. Leaving them in would ship internal structure to every
@@ -1117,6 +1161,43 @@ def selftest():
                   for name in ("dispatch_downstream", "post_incident",
                                "webhook_dispatch", "tts_alert", "speak")),
           "no path to dispatch, speech or escalation")
+
+    # -- the console's field names -----------------------------------
+    #
+    # Measured against the deployed console: every request it sends
+    # returned 400 without these, and the console showed DEMO FALLBACK,
+    # which reads as a frontend fault and is not one.
+
+    console_shape = IncidentRequest(
+        location="Bay-1", substance="Chlorine",
+        incident_type="NO-Mask", language="Telugu")
+
+    check("location is accepted as bay_id",
+          console_shape.resolved_bay() == "Bay-1", "location -> bay_id")
+
+    check("substance is accepted as substance_name",
+          console_shape.resolved_substance_name() == "Chlorine",
+          "substance -> substance_name")
+
+    check("a language display name resolves to a code",
+          console_shape.resolved_language() == "te", "Telugu -> te")
+
+    check("a language code still passes through",
+          IncidentRequest(bay_id="B", language="hi").resolved_language() == "hi",
+          "hi -> hi")
+
+    check("the documented shape still wins when both are sent",
+          IncidentRequest(bay_id="BAY-9", location="ignored").resolved_bay() == "BAY-9",
+          "bay_id takes precedence")
+
+    check("the console's media object does not 422",
+          IncidentRequest(location="Bay-1", incident_type="Spill",
+                          media={"camera": True}).resolved_bay() == "Bay-1",
+          "accepted and ignored")
+
+    check("target_lang is honoured",
+          IncidentRequest(bay_id="B", target_lang="bn").resolved_language() == "bn",
+          "documented alias")
 
     check("rules tier needs nothing", plain["tier"] == "rules", plain["tier"])
 
