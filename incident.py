@@ -68,6 +68,35 @@ SEVERITIES = ("low", "medium", "high", "critical")
 
 REQUIRED_KEYS = ("severity", "steps", "contraindication", "spoken_alert")
 
+# How the corpus was searched, reported back so a caller can tell the
+# difference between three outcomes that all produce a grounded answer
+# and are not equally trustworthy:
+#
+#   substance_matched  -- a code was given and the corpus has documents
+#                         for it. The SDS excerpts are about the
+#                         substance the caller named.
+#   substance_unknown  -- a code was given and the corpus has nothing
+#                         under it. The answer is real and grounded,
+#                         but grounded in whatever else was
+#                         semantically nearest, which may be a
+#                         different chemical entirely.
+#   substance_unmapped -- no code was given, because the detection side
+#                         could not map what it saw to one. Same
+#                         fallback as above, different cause: nobody
+#                         claimed a code and was wrong, the claim was
+#                         never made.
+#   unavailable        -- no index. Ungrounded; grounded is false.
+#
+# The middle two are the ones worth separating. Both fall back to
+# unfiltered search and look identical in the response body otherwise,
+# but "your code isn't in our corpus" is a message for whoever owns the
+# corpus, and "we couldn't identify the substance" is a message for
+# whoever owns detection.
+RETRIEVAL_MATCHED = "substance_matched"
+RETRIEVAL_UNKNOWN = "substance_unknown"
+RETRIEVAL_UNMAPPED = "substance_unmapped"
+RETRIEVAL_UNAVAILABLE = "unavailable"
+
 
 # None = not tried yet, True = loaded, False = tried and cannot.
 # Caching the failure is the same reasoning as language.py's
@@ -210,6 +239,12 @@ def _select(ranked, substance_code, top_k):
     this corpus has never heard of. That falls back to unfiltered
     similarity, and retrieved_sources then shows the caller exactly
     what was used instead.
+
+    Returns (selected, matched), where `matched` says whether the code
+    actually had documents. The caller needs that to report
+    substance_matched versus substance_unknown -- the selection alone
+    cannot be read backwards to recover it, because a fallback
+    selection and a matched one are the same shape.
     """
 
     code = (substance_code or "").strip().upper()
@@ -251,23 +286,44 @@ def _select(ranked, substance_code, top_k):
     for chunk in ranked:
         add(chunk)
 
-    return selected
+    return selected, bool(matching)
 
 
-def retrieve(substance_code, incident_type, top_k=DEFAULT_TOP_K):
+def retrieve(substance_code, substance_name, incident_type, top_k=DEFAULT_TOP_K):
     """
-    Top-k corpus chunks for this incident. Returns [] when retrieval is
-    unavailable, which the caller must report rather than paper over.
+    Top-k corpus chunks for this incident, and how they were found.
+
+    Returns (chunks, retrieval_mode). An empty list with
+    RETRIEVAL_UNAVAILABLE is a supported outcome the caller must
+    report rather than paper over.
+
+    A null substance_code means "the detection side could not map this
+    to a known code", NOT "there is no substance involved". The
+    difference matters here: there is no code to filter on, so the
+    substance-aware path is skipped entirely rather than run against an
+    empty string -- which would match the regulation chunks, whose
+    substance_code is null, and quietly return duty-of-care text as
+    though it were the substance's own safety data.
     """
 
     index, chunks, model = _ensure_index()
 
     if index is None or model is None:
-        return []
+        return [], RETRIEVAL_UNAVAILABLE
 
     import numpy
 
-    query = "%s%s %s" % (QUERY_PREFIX, substance_code, incident_type)
+    # The name goes into the query whether or not a code was mapped.
+    # When the code is null it is the only description of the substance
+    # we have, and dropping it would leave the unmapped case searching
+    # on the incident type alone -- "eye splash" with nothing to say
+    # eye splash of what. When the code IS present the name still adds
+    # signal, since corpus prose says "sodium hydroxide" far more often
+    # than it says "NAOH".
+    query = QUERY_PREFIX + " ".join(
+        part for part in (substance_code, substance_name, incident_type)
+        if part and part.strip()
+    )
 
     vector = numpy.asarray(
         model.encode([query], normalize_embeddings=True),
@@ -282,7 +338,12 @@ def retrieve(substance_code, incident_type, top_k=DEFAULT_TOP_K):
 
     ranked = [chunks[i] for i in ids[0] if i != -1]
 
-    return _select(ranked, substance_code, top_k)
+    if not substance_code:
+        return ranked[:top_k], RETRIEVAL_UNMAPPED
+
+    selected, matched = _select(ranked, substance_code, top_k)
+
+    return selected, (RETRIEVAL_MATCHED if matched else RETRIEVAL_UNKNOWN)
 
 
 # ============================================================
@@ -308,7 +369,7 @@ def _format_excerpts(chunks):
     return "\n\n".join(blocks)
 
 
-def _build_prompt(bay_id, substance_code, incident_type, chunks):
+def _build_prompt(bay_id, substance_code, substance_name, incident_type, chunks):
     """
     A JSON-only instruction, grounded in the retrieved excerpts.
 
@@ -360,6 +421,7 @@ def _build_prompt(bay_id, substance_code, incident_type, chunks):
         "and a response must be issued immediately.\n\n"
         "Incident:\n"
         "- Bay: %s\n"
+        "- Substance: %s\n"
         "- Substance code: %s\n"
         "- Incident type: %s\n\n"
         "%s"
@@ -387,7 +449,19 @@ def _build_prompt(bay_id, substance_code, incident_type, chunks):
         "that do not read well, no chemical formulae spelled as symbols.\n"
         "- Output the JSON object and nothing else. No markdown fences, "
         "no commentary before or after it.\n"
-        % (bay_id, substance_code, incident_type, grounding, sourcing_rule)
+        % (
+            bay_id,
+            substance_name,
+            # Say plainly that no code was mapped, rather than printing
+            # "None" and leaving the model to interpret it. An unmapped
+            # substance is a fact about the detection, not a missing
+            # field, and the model should reason from the name it does
+            # have instead of treating the incident as substanceless.
+            substance_code or "not mapped to a known code",
+            incident_type,
+            grounding,
+            sourcing_rule,
+        )
     )
 
 
@@ -471,21 +545,38 @@ def _validate(payload):
 # ASSESSMENT
 # ============================================================
 
-def assess(bay_id, substance_code, incident_type, target_lang, top_k=DEFAULT_TOP_K):
+def assess(
+    bay_id,
+    substance_code,
+    substance_name,
+    incident_type,
+    target_lang,
+    top_k=DEFAULT_TOP_K,
+):
     """
     Full pipeline: retrieve, generate, validate, localize.
 
     Returns a dict with severity, steps, contraindication,
-    spoken_alert, spoken_alert_translated, grounded and
-    retrieved_sources. Raises RuntimeError when no provider is
-    configured, ValueError when the model would not produce a usable
-    answer, and whatever requests raises on a transport failure --
-    api.py maps those onto status codes.
+    spoken_alert, spoken_alert_translated, grounded, retrieval_mode,
+    retrieved_sources and substance_name. Raises RuntimeError when no
+    provider is configured, ValueError when the model would not
+    produce a usable answer, and whatever requests raises on a
+    transport failure -- api.py maps those onto status codes.
+
+    substance_name is echoed back untouched. The outputs team builds
+    the compliance PDF from this response, and making them look the
+    name up again against the detection side's table would mean the
+    PDF could disagree with the assessment about what the incident was
+    even about.
     """
 
-    chunks = retrieve(substance_code, incident_type, top_k)
+    chunks, retrieval_mode = retrieve(
+        substance_code, substance_name, incident_type, top_k
+    )
 
-    prompt = _build_prompt(bay_id, substance_code, incident_type, chunks)
+    prompt = _build_prompt(
+        bay_id, substance_code, substance_name, incident_type, chunks
+    )
 
     assessment = _validate(generate_structured_response(prompt))
 
@@ -502,7 +593,9 @@ def assess(bay_id, substance_code, incident_type, target_lang, top_k=DEFAULT_TOP
         "contraindication": assessment["contraindication"],
         "spoken_alert": spoken_alert,
         "spoken_alert_translated": translated,
+        "substance_name": substance_name,
         "grounded": bool(chunks),
+        "retrieval_mode": retrieval_mode,
         "retrieved_sources": sources,
     }
 

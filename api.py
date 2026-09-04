@@ -215,7 +215,17 @@ class TranslateResponse(BaseModel):
 
 class IncidentRequest(BaseModel):
     bay_id: str = Field(..., description="Where the incident is, e.g. 'BAY-04'.")
-    substance_code: str = Field(..., description="Substance involved, e.g. 'CL2'.")
+    substance_code: str | None = Field(
+        None,
+        description=(
+            "Retrieval key, e.g. 'CL2'. Null when the detecting side "
+            "could not map the substance to a known code."
+        ),
+    )
+    substance_name: str = Field(
+        ...,
+        description="Human-readable substance, e.g. 'Sodium hydroxide (50% solution)'.",
+    )
     incident_type: str = Field(..., description="What happened, e.g. 'gas leak'.")
     target_lang: str = Field(..., description="Language for the spoken alert.")
 
@@ -226,7 +236,9 @@ class IncidentResponse(BaseModel):
     contraindication: str
     spoken_alert: str
     spoken_alert_translated: bool
+    substance_name: str
     grounded: bool
+    retrieval_mode: str
     retrieved_sources: list[str]
     latency_ms: float
 
@@ -387,9 +399,28 @@ def incident_response(body: IncidentRequest, x_api_key: str | None = Header(None
     require_key(x_api_key)
 
     bay_id = validate_field(body.bay_id, "bay_id")
-    substance_code = validate_field(body.substance_code, "substance_code")
+    substance_name = validate_field(body.substance_name, "substance_name")
     incident_type = validate_field(body.incident_type, "incident_type")
     target_lang = validate_field(body.target_lang, "target_lang")
+
+    # Null means "the detecting side could not map this substance to a
+    # code" -- a real, expected state with its own retrieval path. An
+    # empty string means neither that nor a code, so it is rejected
+    # rather than quietly read as null: coercing "" to unmapped would
+    # hide a caller emitting empty strings where it meant to emit
+    # nulls, and the symptom would be assessments silently skipping
+    # substance-aware retrieval for substances that do have documents.
+    substance_code = body.substance_code
+
+    if substance_code is not None:
+
+        if not substance_code.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="substance_code must be a non-empty string or null",
+            )
+
+        substance_code = validate_field(substance_code, "substance_code")
 
     # Checked against the module's own list rather than a copy kept
     # here, so adding a language in one place adds it everywhere.
@@ -406,6 +437,7 @@ def incident_response(body: IncidentRequest, x_api_key: str | None = Header(None
         result = incident.assess(
             bay_id,
             substance_code,
+            substance_name,
             incident_type,
             target_lang.lower(),
         )

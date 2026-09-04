@@ -155,6 +155,7 @@ def main():
     incident_body = {
         "bay_id": "BAY-04",
         "substance_code": "CL2",
+        "substance_name": "Chlorine gas",
         "incident_type": "gas leak",
         "target_lang": "en",
     }
@@ -254,8 +255,8 @@ def main():
 
             required = [
                 "severity", "steps", "contraindication", "spoken_alert",
-                "spoken_alert_translated", "grounded", "retrieved_sources",
-                "latency_ms",
+                "spoken_alert_translated", "substance_name", "grounded",
+                "retrieval_mode", "retrieved_sources", "latency_ms",
             ]
 
             missing = [field for field in required if field not in body]
@@ -286,9 +287,23 @@ def main():
             # from -- which is worse than either state on its own.
             check(
                 "incident grounding is self-consistent",
-                bool(body.get("grounded")) == bool(body.get("retrieved_sources")),
-                "grounded=%s sources=%s"
-                % (body.get("grounded"), body.get("retrieved_sources")),
+                bool(body.get("grounded")) == bool(body.get("retrieved_sources"))
+                and (body.get("retrieval_mode") == "unavailable")
+                != bool(body.get("grounded")),
+                "grounded=%s mode=%s sources=%s"
+                % (
+                    body.get("grounded"),
+                    body.get("retrieval_mode"),
+                    body.get("retrieved_sources"),
+                ),
+            )
+
+            # The name is what the compliance PDF is built from, so it
+            # has to come back exactly as sent, not normalised.
+            check(
+                "incident echoes substance_name verbatim",
+                body.get("substance_name") == incident_body["substance_name"],
+                "%r" % body.get("substance_name"),
             )
 
         else:

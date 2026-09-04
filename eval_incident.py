@@ -58,10 +58,23 @@ def check(name, condition, detail=""):
 # prose, because that is what the endpoint will actually receive.
 
 SUBSTANCE_CASES = [
-    ("CL2", "sds_chlorine.md", ["gas leak near the pump pit", "worker collapsed in a trench"]),
-    ("NH3", "sds_ammonia.md", ["refrigerant leak in the plant room", "eye splash from a valve"]),
-    ("H2SO4", "sds_sulphuric_acid.md", ["acid splash to the eyes", "drum spill on the floor"]),
-    ("NAOH", "sds_caustic_soda.md", ["caustic burn to the forearm", "pellets spilled in a walkway"]),
+    ("CL2", "Chlorine gas", "sds_chlorine.md",
+     ["gas leak near the pump pit", "worker collapsed in a trench"]),
+    ("NH3", "Anhydrous ammonia", "sds_ammonia.md",
+     ["refrigerant leak in the plant room", "eye splash from a valve"]),
+    ("H2SO4", "Sulphuric acid (98%)", "sds_sulphuric_acid.md",
+     ["acid splash to the eyes", "drum spill on the floor"]),
+    ("NAOH", "Sodium hydroxide (50% solution)", "sds_caustic_soda.md",
+     ["caustic burn to the forearm", "pellets spilled in a walkway"]),
+]
+
+# Codes the detection side knows about that this corpus has no
+# documents for. Not a gap to be closed -- the corpus is an
+# illustrative sample, and these are here so the substance_unknown
+# path stays a tested, expected state rather than a surprise.
+UNGROUNDED_CODES = [
+    ("TOLUENE", "Toluene"),
+    ("PETROL", "Petrol (unleaded)"),
 ]
 
 
@@ -75,10 +88,12 @@ def eval_retrieval():
 
     print("\nRETRIEVAL")
 
+    first_chunks, first_mode = incident.retrieve("CL2", "Chlorine gas", "gas leak")
+
     if not check(
         "index loads",
-        incident.retrieve("CL2", "gas leak") != [],
-        "retrieval_available=%s" % (incident.retrieval_available(),),
+        first_chunks != [],
+        "retrieval_available=%s mode=%s" % (incident.retrieval_available(), first_mode),
     ):
         print("  (no index -- run: python ingest.py)")
         return
@@ -90,18 +105,22 @@ def eval_retrieval():
     baseline_top1_hits = 0
     total = 0
 
-    for code, expected_file, incident_types in SUBSTANCE_CASES:
+    for code, name, expected_file, incident_types in SUBSTANCE_CASES:
 
         for incident_type in incident_types:
 
             total += 1
 
-            chunks = incident.retrieve(code, incident_type)
+            chunks, mode = incident.retrieve(code, name, incident_type)
             sources = [chunk["source_file"] for chunk in chunks]
 
             sds = [s for s in sources if s.startswith("sds_")]
 
-            correct = bool(sds) and all(s == expected_file for s in sds)
+            correct = (
+                bool(sds)
+                and all(s == expected_file for s in sds)
+                and mode == incident.RETRIEVAL_MATCHED
+            )
 
             if correct:
                 policy_hits += 1
@@ -109,7 +128,7 @@ def eval_retrieval():
             check(
                 "%s / %s" % (code, incident_type[:26]),
                 correct,
-                "sds cited: %s" % (sorted(set(sds)) or "none"),
+                "%s, sds cited: %s" % (mode, sorted(set(sds)) or "none"),
             )
 
             # Baseline: what plain top-k similarity would have cited,
@@ -121,7 +140,7 @@ def eval_retrieval():
             # excerpts. The lenient measure asks only whether the
             # single best-scoring SDS was right, which is the most
             # favourable reading the baseline can be given.
-            ranked = _naive_top_k(incident, code, incident_type)
+            ranked = _naive_top_k(incident, code, name, incident_type)
             baseline_sds = [s for s in ranked if s.startswith("sds_")]
 
             if baseline_sds and all(s == expected_file for s in baseline_sds):
@@ -146,7 +165,7 @@ def eval_retrieval():
 
     # -- one regulation slot is held --
 
-    chunks = incident.retrieve("CL2", "gas leak near the pump pit")
+    chunks, _ = incident.retrieve("CL2", "Chlorine gas", "gas leak near the pump pit")
 
     check(
         "regulation slot filled",
@@ -154,44 +173,90 @@ def eval_retrieval():
         "doc_types: %s" % [c["doc_type"] for c in chunks],
     )
 
-    # -- open vocabulary: a code the corpus has never heard of --
+    # -- a code the corpus has no documents for --
+    #
+    # An expected state, not a defect: the detection side knows more
+    # codes than this illustrative corpus has sheets for. What must
+    # hold is that the response says so, rather than presenting another
+    # chemical's safety data as though it were this one's.
 
-    unknown = incident.retrieve("XYLENE-7", "unlabelled drum leaking")
+    for code, name in UNGROUNDED_CODES:
+
+        chunks, mode = incident.retrieve(code, name, "spill in the loading bay")
+
+        check(
+            "%s reports substance_unknown" % code,
+            mode == incident.RETRIEVAL_UNKNOWN and len(chunks) == incident.DEFAULT_TOP_K,
+            "%s, %d chunks from %s"
+            % (mode, len(chunks), sorted({c["source_file"] for c in chunks})),
+        )
+
+    # -- open vocabulary: a code nobody has ever heard of --
+
+    unknown, mode = incident.retrieve("XYLENE-7", "Xylene", "unlabelled drum leaking")
 
     check(
         "unknown substance falls back",
-        len(unknown) == incident.DEFAULT_TOP_K,
-        "%d chunks returned, no crash" % len(unknown),
+        len(unknown) == incident.DEFAULT_TOP_K and mode == incident.RETRIEVAL_UNKNOWN,
+        "%s, %d chunks returned, no crash" % (mode, len(unknown)),
+    )
+
+    # -- null code: unmapped, which is NOT the same as no substance --
+
+    unmapped, mode = incident.retrieve(
+        None, "Sodium hydroxide (50% solution)", "caustic burn to the forearm"
+    )
+
+    check(
+        "null code reports substance_unmapped",
+        mode == incident.RETRIEVAL_UNMAPPED and len(unmapped) == incident.DEFAULT_TOP_K,
+        "%s, %d chunks" % (mode, len(unmapped)),
+    )
+
+    # The substance-aware path is skipped entirely when there is no
+    # code. If it were run against an empty string it would match the
+    # regulation chunks, whose substance_code is null, and return
+    # duty-of-care text in the SDS slots.
+    check(
+        "unmapped retrieval is not all regulations",
+        any(chunk["doc_type"] == "sds" for chunk in unmapped),
+        "doc_types: %s" % [c["doc_type"] for c in unmapped],
     )
 
     # -- top_k is honoured --
 
     check(
         "top_k respected",
-        len(incident.retrieve("CL2", "gas leak", top_k=2)) == 2,
+        len(incident.retrieve("CL2", "Chlorine gas", "gas leak", top_k=2)[0]) == 2,
         "",
     )
 
     # -- no duplicate chunks --
 
-    chunks = incident.retrieve("NH3", "leak")
+    chunks, _ = incident.retrieve("NH3", "Anhydrous ammonia", "leak")
     ids = [chunk["chunk_id"] for chunk in chunks]
 
     check("no duplicate chunks", len(ids) == len(set(ids)), "%d unique" % len(set(ids)))
 
 
-def _naive_top_k(incident, code, incident_type):
+def _naive_top_k(incident, code, name, incident_type):
     """
     What pure cosine similarity would have retrieved, bypassing the
     selection policy. The comparison the policy has to justify itself
     against.
+
+    Uses the same query text retrieve() builds, so the comparison
+    isolates the selection policy rather than accidentally measuring a
+    difference in how the two were asked.
     """
 
     import numpy
 
     index, chunks, model = incident._ensure_index()
 
-    query = "%s%s %s" % (incident.QUERY_PREFIX, code, incident_type)
+    query = incident.QUERY_PREFIX + " ".join(
+        part for part in (code, name, incident_type) if part and part.strip()
+    )
 
     vector = numpy.asarray(
         model.encode([query], normalize_embeddings=True), dtype="float32"
@@ -383,18 +448,34 @@ def eval_live(base, delay):
     valid = {
         "bay_id": "BAY-04",
         "substance_code": "CL2",
+        "substance_name": "Chlorine gas",
         "incident_type": "gas leak",
         "target_lang": "en",
     }
 
     for name, field, value in [
         ("bay_id empty", "bay_id", "  "),
-        ("substance_code empty", "substance_code", ""),
+        ("substance_name empty", "substance_name", ""),
         ("incident_type empty", "incident_type", ""),
         ("target_lang empty", "target_lang", ""),
     ]:
         status, body = call(base, "/incident", "POST", dict(valid, **{field: value}))
         check(name + " -> 400", status == 400, str(body)[:70])
+
+    # Null is a documented state; empty string is not. Coercing "" to
+    # unmapped would hide a caller emitting the wrong thing.
+    status, body = call(base, "/incident", "POST", dict(valid, substance_code=""))
+    check(
+        "substance_code empty -> 400",
+        status == 400 and "null" in str(body),
+        str(body)[:80],
+    )
+
+    status, body = call(
+        base, "/incident", "POST",
+        {k: v for k, v in valid.items() if k != "substance_name"},
+    )
+    check("substance_name missing -> 422", status == 422, "status %s" % status)
 
     status, body = call(base, "/incident", "POST", dict(valid, target_lang="fr"))
     check(
@@ -411,7 +492,7 @@ def eval_live(base, delay):
 
     # -- real assessments --
 
-    for position, (code, expected_file, incident_types) in enumerate(SUBSTANCE_CASES):
+    for position, (code, name, expected_file, incident_types) in enumerate(SUBSTANCE_CASES):
 
         if position:
             time.sleep(delay)
@@ -421,6 +502,7 @@ def eval_live(base, delay):
         status, body = call(base, "/incident", "POST", {
             "bay_id": "BAY-04",
             "substance_code": code,
+            "substance_name": name,
             "incident_type": incident_types[0],
             "target_lang": "en",
         })
@@ -453,8 +535,15 @@ def eval_live(base, delay):
 
         check(
             "%s grounded" % code,
-            body.get("grounded") is True,
-            "grounded=%s" % body.get("grounded"),
+            body.get("grounded") is True
+            and body.get("retrieval_mode") == incident.RETRIEVAL_MATCHED,
+            "grounded=%s mode=%s" % (body.get("grounded"), body.get("retrieval_mode")),
+        )
+
+        check(
+            "%s echoes substance_name verbatim" % code,
+            body.get("substance_name") == name,
+            "%r" % body.get("substance_name"),
         )
 
         check(
@@ -472,6 +561,7 @@ def eval_live(base, delay):
     status, body = call(base, "/incident", "POST", {
         "bay_id": "BAY-04",
         "substance_code": "CL2",
+        "substance_name": "Chlorine gas",
         "incident_type": "gas leak near the pump pit",
         "target_lang": "hi",
     })
@@ -492,6 +582,32 @@ def eval_live(base, delay):
                 bool(str(body.get("spoken_alert") or "").strip()),
                 "english fallback present, correctly labelled",
             )
+
+    # -- unmapped substance, end to end -----------------------------
+
+    time.sleep(delay)
+
+    status, body = call(base, "/incident", "POST", {
+        "bay_id": "BAY-11",
+        "substance_code": None,
+        "substance_name": "Unidentified white crystalline solid",
+        "incident_type": "unlabelled drum leaking",
+        "target_lang": "en",
+    })
+
+    if check("unmapped request assessed", status == 200, "status %s" % status):
+
+        check(
+            "unmapped reports substance_unmapped",
+            body.get("retrieval_mode") == incident.RETRIEVAL_UNMAPPED,
+            "mode=%s grounded=%s" % (body.get("retrieval_mode"), body.get("grounded")),
+        )
+
+        check(
+            "unmapped still answers",
+            body.get("severity") in incident.SEVERITIES and body.get("steps"),
+            "severity=%r, %d steps" % (body.get("severity"), len(body.get("steps") or [])),
+        )
 
 
 # ============================================================
