@@ -48,6 +48,7 @@ REPORT = os.path.join(HERE, "EVAL-TRIGGER.md")
 # its output format degrades the report, never the gate.
 SUITES = [
     ("trigger gate", ["yolo_trigger.py", "selftest"]),
+    ("confidence router", ["confidence_router.py", "--selftest"]),
     ("dossier", ["dossier.py", "--selftest"]),
     ("webhook dispatch", ["webhook_dispatch.py", "--selftest"]),
     ("tts alert", ["tts_alert.py", "--selftest"]),
@@ -172,7 +173,7 @@ def measure_imports():
     results = {}
 
     for module in ("yolo_trigger", "dossier", "webhook_dispatch", "tts_alert",
-                   "alert_language"):
+                   "alert_language", "confidence_router"):
         data = _snippet(
             "import time,json;"
             "t=time.perf_counter();"

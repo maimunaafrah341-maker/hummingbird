@@ -720,7 +720,7 @@ def frames_from(source, max_frames=None):
 
 def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                language="en", show=False, gate=None, downstream=True,
-               max_frames=None, max_width=MAX_INFERENCE_WIDTH):
+               max_frames=None, max_width=MAX_INFERENCE_WIDTH, router=None):
     """
     Watch one source, feed every frame through the gate, fire what the
     gate lets through. Ctrl-C to stop.
@@ -748,6 +748,11 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
     log("watching zone=%s on source %r -- Ctrl-C to stop" % (zone, source_index))
     log("gate: %d of last %d frames, %.0fs cooldown, conf>=%.2f"
         % (gate.hits, gate.window, gate.cooldown, CONFIDENCE_FLOOR))
+
+    if router is not None:
+        log("router: high>=%.2f fires now, %.2f-%.2f needs %d hits in %.0fs"
+            % (router.high, router.floor, router.high,
+               router.verify_hits, router.verify_window))
 
     blank_frames = 0
     fired_total = 0
@@ -793,6 +798,15 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                 # Keep the most confident instance of each violation.
                 seen[name] = max(seen.get(name, 0.0), confidence)
 
+            # Confidence routing runs before the frame gate, and the two
+            # ask different questions. The router asks "is this box real
+            # evidence?" -- a borderline detection is held until it
+            # reconfirms, and suppressed if it never does. The gate then
+            # asks "have we seen enough of it, and did we already fire?".
+            # A suppressed detection never reaches the gate at all.
+            if router is not None:
+                seen = router.acting(zone, seen)
+
             fires = gate.observe(zone, seen.keys())
             annotated = results.plot() if (fires or show) else None
 
@@ -833,6 +847,14 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
         # would otherwise cut off the thing it just triggered.
         if downstream:
             drain_downstream()
+
+    if router is not None:
+        counts = router.summary()
+        suppressed = counts.get("suppressed", 0)
+
+        if suppressed:
+            log("router suppressed %d borderline detection(s) -- "
+                "run with --audit to see why" % suppressed)
 
     log("%d incident(s) fired" % fired_total)
     return fired_total
@@ -1235,6 +1257,11 @@ def main(argv=None):
                         help="stop after N frames (a still image is otherwise endless)")
     camera.add_argument("--max-width", type=int, default=MAX_INFERENCE_WIDTH,
                         help="downscale wider frames before inference (0 disables)")
+    camera.add_argument("--no-router", action="store_true",
+                        help="disable two-tier confidence routing (act on any "
+                             "detection above the floor, as before)")
+    camera.add_argument("--audit", action="store_true",
+                        help="print the router's decision trail when the run ends")
 
     kiosk = sub.add_parser(
         "kiosk", help="one trigger, no camera -- what a physical button calls")
@@ -1276,13 +1303,24 @@ def main(argv=None):
 
         return 0 if result["ok"] else 1
 
+    router = None
+
+    if not args.no_router:
+        import confidence_router
+        router = confidence_router.ConfidenceRouter()
+
     run_camera(
         args.zone, source_index=args.source, base=args.api, key=args.key,
         substance=args.substance, language=args.language, show=args.show,
         gate=TriggerGate(cooldown=args.cooldown, hits=args.hits, window=args.window),
         downstream=not args.no_downstream, max_frames=args.max_frames,
-        max_width=args.max_width,
+        max_width=args.max_width, router=router,
     )
+
+    if router is not None and args.audit:
+        print("\nrouter decision trail:")
+        router.print_audit()
+
     return 0
 
 
