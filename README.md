@@ -269,6 +269,7 @@ no API keys at all.
 | `HAZARDWATCH_HITS` / `HAZARDWATCH_WINDOW` | The K-of-M gate. Defaults 3 and 8. |
 | `HAZARDWATCH_CONF` | Confidence floor. Default 0.45. |
 | `HAZARDWATCH_TIMEOUT` | Client timeout for `/incident`. Default **90s** — see below. |
+| `HAZARDWATCH_TIMEOUT_COOLDOWN` | Extra gate hold after a timeout. Default 30s. |
 | `CORS_ORIGINS` | Frontend origin. Unset allows any, which is right until the frontend has a URL. |
 | `FEATHERLESS_API_KEY` | Enables `POST /incident/brief`, and nothing else. |
 
@@ -290,6 +291,7 @@ Three places enforce that:
 |---|---|
 | `post_incident()` | A process-wide lock held for the whole round trip, released only when the call fully returns — success, 503, or client timeout. |
 | `fire_incident_async()` | The camera's POSTs go on the single downstream worker, so they are serial *and* the loop never waits on one. |
+| After a timeout | The gate is held a further 30s. A 200 or a 503 means the server is done and the quota is free; a *timeout* means the opposite — we hung up, it is still running, still consuming. Releasing there hands the next caller a slot that is not free. |
 | The kiosk UI | A promise chain, not a boolean flag — React state lands a render late, so `disabled` alone still lets a fast double-click put two on the wire. Queued presses show **"Processing previous alert…"**. |
 
 The client timeout is **90 seconds**, matching the worst case to plan
@@ -299,6 +301,12 @@ four and a half minutes — the exact failure this project exists to
 prevent. Verified against a stub that sleeps 3s per call: peak
 concurrency 1, and the loop finished all 90 frames while the third
 incident was still in flight.
+
+That fourth row is the one worth reading twice. "Wait for success, 503,
+or client timeout" is not sufficient on its own — the timeout case is
+exactly the one where the server has *not* finished with us, and it is
+the case the 429s were traced to. The right hold length is unknowable
+from this side, so 30s is a tunable hedge, not a measurement.
 
 **The lock is process-local, and that is a real limit.** Two bays
 watched by two `yolo_trigger` processes do not queue behind each other.

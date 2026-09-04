@@ -379,6 +379,32 @@ _INCIDENT_GATE = threading.Lock()
 _INCIDENT_WAITING = 0
 _INCIDENT_WAITING_LOCK = threading.Lock()
 
+# Extra hold after a client timeout, and ONLY after a client timeout.
+#
+# "Wait for the current call to return -- success, 503, or timeout" is
+# not sufficient on its own, and the timeout case is the one that
+# matters. A 503 or a 200 means the server is done with us and the
+# quota is free. A client timeout means the opposite: we stopped
+# waiting, the request is still running server-side, and it is still
+# consuming the limit. Releasing the gate there hands the next caller
+# a slot that is not actually free -- which is the exact overlap the
+# gate exists to prevent, arriving through the back door.
+#
+# The right length is unknowable from this side: it depends how long
+# the service keeps working after we hang up. This is a tunable hedge,
+# not a measurement. Set HAZARDWATCH_TIMEOUT_COOLDOWN=0 to disable.
+_TIMEOUT_COOLDOWN = float(os.getenv("HAZARDWATCH_TIMEOUT_COOLDOWN", "30"))
+
+
+def _is_timeout(error):
+    """Did we hang up on the server, or did it answer us?"""
+
+    if isinstance(error, TimeoutError):
+        return True
+
+    # urlopen wraps the socket timeout in a URLError.
+    return isinstance(getattr(error, "reason", None), TimeoutError)
+
 
 def incident_queue_depth():
     """
@@ -444,6 +470,13 @@ def post_incident(event, base=None, key=None, timeout=HTTP_TIMEOUT):
                     return e.code, raw
 
             except Exception as e:
+                # Still inside the gate: a timeout must not release it.
+                if _is_timeout(e) and _TIMEOUT_COOLDOWN > 0:
+                    log("  /incident timed out after %.0fs -- holding the "
+                        "gate %.0fs more, the abandoned request is still "
+                        "consuming quota" % (timeout, _TIMEOUT_COOLDOWN))
+                    time.sleep(_TIMEOUT_COOLDOWN)
+
                 return None, "%s: %s" % (type(e).__name__, e)
 
     finally:
@@ -1416,6 +1449,56 @@ def selftest():
     check("the gate is released after every call",
           not incident_busy() and incident_queue_depth() == 0,
           "depth back to 0")
+
+    # -- and a timeout must NOT release it ---------------------------
+    #
+    # The gap in "wait for success, 503, or client timeout": on a
+    # timeout the server is still working and still consuming the
+    # quota. Releasing there hands the next caller a slot that is not
+    # free, which is the overlap the gate exists to prevent arriving
+    # through the back door.
+
+    class _NeverAnswers(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            time.sleep(2.0)         # longer than the client will wait
+
+        def log_message(self, *a):
+            pass
+
+    stuck = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NeverAnswers)
+    stuck_base = "http://127.0.0.1:%d" % stuck.server_address[1]
+    _t.Thread(target=stuck.serve_forever, daemon=True).start()
+
+    global _TIMEOUT_COOLDOWN
+    original_cooldown = _TIMEOUT_COOLDOWN
+    _TIMEOUT_COOLDOWN = 0.4
+
+    try:
+        started = time.time()
+        status, body = post_incident({"bay_id": "BAY-1"}, base=stuck_base,
+                                     timeout=0.3)
+        first = time.time() - started
+
+        check("a timeout returns rather than raising",
+              status is None and isinstance(body, str),
+              body[:34])
+
+        check("and holds the gate through the cooldown",
+              first >= 0.3 + 0.4,
+              "%.2fs = 0.3s timeout + 0.4s cooldown" % first)
+
+        _TIMEOUT_COOLDOWN = 0
+        started = time.time()
+        post_incident({"bay_id": "BAY-1"}, base=stuck_base, timeout=0.3)
+        without = time.time() - started
+
+        check("cooldown of 0 disables the hold",
+              without < 0.3 + 0.2,
+              "%.2fs -- opt out honoured" % without)
+
+    finally:
+        _TIMEOUT_COOLDOWN = original_cooldown
+        stuck.shutdown()
 
 
     print("\n%d/%d gate checks passed" % (sum(checks), len(checks)))
