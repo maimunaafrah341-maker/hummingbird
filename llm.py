@@ -20,6 +20,7 @@ skipped, so one key is enough to run.
 """
 
 import os
+import re
 
 import requests
 from dotenv import load_dotenv
@@ -116,11 +117,37 @@ FEATHERLESS_BASE_URL = os.getenv(
 FEATHERLESS_MODELS = [
     m.strip() for m in os.getenv(
         "FEATHERLESS_MODELS",
-        "mistralai/Mistral-7B-Instruct-v0.3,"
+        # Qwen first, measured against the live key on 2026-09-05:
+        # it returned 537 clean structured characters. Mistral-7B-v0.3
+        # was first and degenerated -- a wall of one repeated letter,
+        # then stray Korean -- and Featherless returned 200 for it, so
+        # nothing upstream noticed. Llama-3.1-8B answers 403: gated
+        # behind a HuggingFace org connection, not a plan tier.
         "Qwen/Qwen2.5-7B-Instruct,"
-        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "Qwen/Qwen2.5-14B-Instruct,"
+        "mistralai/Mistral-7B-Instruct-v0.3",
     ).split(",") if m.strip()
 ]
+
+
+def _looks_degenerate(text):
+    """
+    Did the model fall into a repetition loop?
+
+    Two signals, both cheap. A long run of one character is the classic
+    loop; one character dominating the whole response catches the
+    slower version that alternates a little. Normal prose peaks at
+    roughly 18% for the space character, so half is a wide margin.
+    """
+
+    if len(text) < 40:
+        return False
+
+    if re.search(r"(.){29,}", text):
+        return True
+
+    commonest = max(text.count(c) for c in set(text))
+    return commonest / len(text) > 0.5
 
 
 def _call_openai_compatible_api(base_url, api_key, model, prompt, timeout=30,
@@ -168,7 +195,19 @@ def _call_openai_compatible_api(base_url, api_key, model, prompt, timeout=30,
     if not content:
         raise RuntimeError(f"{model} returned an empty response.")
 
-    return content.strip()
+    content = content.strip()
+
+    # A 200 is not the same as an answer. A small model can fall into a
+    # repetition loop and return a wall of one character, and the
+    # provider reports that as success -- so without this check it
+    # reaches the operator as advice. Raising here lets the caller fall
+    # through to the next model, which is what the list is for.
+    if _looks_degenerate(content):
+        raise RuntimeError(
+            f"{model} returned degenerate output "
+            f"({len(content)} chars, repeating).")
+
+    return content
 
 # ============================================================
 # ATHENA — RESPONSE ENGINE
