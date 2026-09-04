@@ -10,6 +10,17 @@ Two smoke tests that answer two different questions.
 
     python smoke_test.py incident
 
+**Two scenarios for the autonomous decisions**, each dry-runnable alone:
+
+    python smoke_test.py suppressed     # a borderline detection is held
+                                        # and never reconfirms -- nothing fires
+    python smoke_test.py escalation     # a HIGH incident nobody acknowledges
+                                        # escalates by itself
+
+The first proves the system declines to act and says why; the second
+proves it acts without being asked. Both run the real modules against
+local stubs. `escalation` takes --window SECONDS and --no-audio.
+
 That second one walks a whole incident through -- fake detection, mock
 /incident, spoken alert, PDF dossier, webhook dispatch -- with no
 camera, no live backend and no webhook endpoint, then prints and opens
@@ -356,6 +367,239 @@ def run_incident_rehearsal(argv):
     return 0
 
 
+# ====================================================================
+# SCENARIO: a borderline detection is correctly suppressed
+# ====================================================================
+
+def run_suppression_scenario(argv):
+    """
+    A marginal box appears, never reconfirms, and nothing fires.
+
+    The whole path runs for real -- ConfidenceRouter, TriggerGate,
+    fire_incident -- against a mock incident service that counts what
+    reaches it. The assertion that matters is that the count stays zero
+    while the audit trail explains why.
+    """
+
+    import confidence_router
+    import yolo_trigger
+
+    print("Scenario: borderline detection, never reconfirmed\n")
+
+    now = [1000.0]
+    router = confidence_router.ConfidenceRouter(clock=lambda: now[0])
+    gate = yolo_trigger.TriggerGate()
+    base, server = _start_mock_incident()
+
+    try:
+        # A clear violation first, so the run proves the path is live and
+        # a zero at the end means "suppressed", not "nothing was wired".
+        for _ in range(4):
+            now[0] += 0.1
+            for violation in gate.observe("BAY-1", router.acting(
+                    "BAY-1", {"NO-Hardhat": 0.91})):
+                yolo_trigger.fire_incident(violation, "BAY-1", source="camera",
+                                           confidence=0.91, base=base)
+
+        control = len(_IncidentHandler.requests)
+        check("control: a high-confidence detection does fire",
+              control == 1, "%d incident(s) from conf 0.91" % control)
+
+        # Now the borderline one. Seen once, then gone.
+        now[0] += 1.0
+        first = router.route("BAY-7", {"NO-Mask": 0.55})
+
+        check("borderline is held, not fired",
+              first[0].action == confidence_router.VERIFYING,
+              first[0].reason[:62])
+
+        for _ in range(12):
+            now[0] += 0.1
+            for violation in gate.observe("BAY-7", router.acting("BAY-7", {})):
+                yolo_trigger.fire_incident(violation, "BAY-7", source="camera",
+                                           base=base)
+
+        # Past the verify window with no reconfirmation.
+        now[0] += 4.0
+        expired = router.route("BAY-7", {})
+
+        check("unconfirmed borderline is suppressed",
+              expired and expired[0].action == confidence_router.SUPPRESSED,
+              expired[0].reason[:62] if expired else "nothing recorded")
+
+        check("nothing reached the incident service",
+              len(_IncidentHandler.requests) == control,
+              "still %d incident(s) -- the marginal box opened none"
+              % len(_IncidentHandler.requests))
+
+        check("the suppression is auditable",
+              router.summary().get(confidence_router.SUPPRESSED) == 1,
+              "summary: %s" % router.summary())
+
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    print("\ndecision trail")
+    router.print_audit()
+
+    print("\n%d passed, %d failed" % (len(passed), len(failed)))
+
+    if failed:
+        print("Failed: %s" % ", ".join(failed))
+        return 1
+
+    print("A marginal detection was held, never reconfirmed, and suppressed.")
+    print("No incident was opened, and the trail above says exactly why.")
+    return 0
+
+
+# ====================================================================
+# SCENARIO: a HIGH incident nobody acknowledges
+# ====================================================================
+
+def run_escalation_scenario(argv):
+    """
+    A real incident fires, nobody presses the button, and the system
+    escalates on its own.
+
+    Both webhook payloads land on a local stub so the second can be
+    compared against the first -- an escalation that is merely a resend
+    would pass a weaker test than this one.
+    """
+
+    import dossier
+    import escalation_watcher
+    import webhook_dispatch
+    import yolo_trigger
+
+    window = 4.0
+    speak = "--no-audio" not in argv
+
+    if "--window" in argv:
+        window = float(argv[argv.index("--window") + 1])
+
+    print("Scenario: HIGH incident, nobody acknowledges (%.0fs window)\n" % window)
+
+    base, server = _start_mock_incident()
+    hook_url, hook = webhook_dispatch._background_stub(quiet=True)
+
+    try:
+        result = yolo_trigger.fire_incident(
+            "NO-Hardhat", "BAY-3", source="camera", confidence=0.93,
+            substance="Sodium hydroxide (50% solution)", base=base)
+
+        check("incident opened", result["ok"], "status %s" % result["status"])
+
+        event, body = result["event"], result["response"]
+        pdf = dossier.build_dossier(event, body)
+        pages_before = _pdf_pages(pdf)
+
+        first = webhook_dispatch.dispatch(event, body, url=hook_url, verbose=False)
+        check("first alert dispatched", first["ok"], "the routine notification")
+
+        watcher = escalation_watcher.EscalationWatcher(
+            window=window, speak=speak, webhook_url=hook_url)
+        incident_id = os.path.splitext(os.path.basename(pdf))[0]
+        watch = watcher.watch(incident_id, event, body, pdf=pdf)
+
+        check("watcher armed on a high-severity incident",
+              watch is not None and watch.state == "waiting",
+              "%.0fs to acknowledge" % window)
+
+        check("watcher does not block the caller",
+              watcher.pending() == [incident_id],
+              "camera would still be running here")
+
+        print("\n   nobody is pressing the button...\n")
+        settled = watcher.wait_for_escalations(timeout=window + 45)
+
+        check("escalation completed", settled and watch.state == "escalated",
+              "after %.0fs of silence" % watch.elapsed())
+
+        # -- the second payload must not be a resend -------------------
+        received = list(webhook_dispatch._StubHandler.received)
+        check("stub received both alerts", len(received) == 2,
+              "%d payload(s)" % len(received))
+
+        if len(received) == 2:
+            routine, escalated = received
+
+            check("second payload is tagged as an escalation",
+                  escalated.get("escalation") is True
+                  and escalated.get("escalation_tag") == escalation_watcher.ESCALATION_TAG,
+                  escalated.get("escalation_tag"))
+
+            check("second payload is not a copy of the first",
+                  escalated["channels"]["sms"]["body"]
+                  != routine["channels"]["sms"]["body"],
+                  "different body, not a retry")
+
+            check("escalation goes to a different channel",
+                  escalated["channels"]["slack"]["channel"]
+                  != routine["channels"]["slack"]["channel"],
+                  "%s -> %s" % (routine["channels"]["slack"]["channel"],
+                                escalated["channels"]["slack"]["channel"]))
+
+            check("escalation records the silence",
+                  escalated.get("unacknowledged_seconds", 0) > 0,
+                  "%.1fs unacknowledged" % escalated.get("unacknowledged_seconds", 0))
+
+            check("payload states nothing real was contacted",
+                  "No emergency service" in escalated.get("note", ""),
+                  escalated.get("note", "")[:48])
+
+        # -- the dossier gained an addendum ----------------------------
+        pages_after = _pdf_pages(pdf)
+
+        if pages_before is None:
+            print("  note: pypdf not installed -- page count check skipped")
+        else:
+            check("dossier gained an addendum page",
+                  pages_after == pages_before + 1,
+                  "%d page(s) -> %d" % (pages_before, pages_after))
+
+        if speak:
+            check("re-alert was spoken",
+                  (watch.result or {}).get("spoke", {}).get("ok"),
+                  "via %s" % (watch.result or {}).get("spoke", {}).get("backend"))
+
+    finally:
+        watcher_cleanup = locals().get("watcher")
+
+        if watcher_cleanup:
+            watcher_cleanup.cancel_all()
+
+        hook.shutdown()
+        hook.server_close()
+        server.shutdown()
+        server.server_close()
+
+    print("\noutputs")
+    print("   PDF  %s  (open it -- the addendum is the last page)" % pdf)
+
+    print("\n%d passed, %d failed" % (len(passed), len(failed)))
+
+    if failed:
+        print("Failed: %s" % ", ".join(failed))
+        return 1
+
+    print("Nobody acknowledged. The system escalated on its own: a distinct")
+    print("higher-urgency alert, an addendum on the report, and the alert")
+    print("spoken again. Demo workflow -- no real responder was contacted.")
+    return 0
+
+
+def _pdf_pages(path):
+    """Page count, or None if pypdf is unavailable."""
+
+    try:
+        from pypdf import PdfReader
+        return len(PdfReader(path).pages)
+    except ImportError:
+        return None
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -363,6 +607,12 @@ def main():
 
     if sys.argv[1] in ("incident", "--incident", "rehearsal"):
         return run_incident_rehearsal(sys.argv[2:])
+
+    if sys.argv[1] in ("suppressed", "suppression"):
+        return run_suppression_scenario(sys.argv[2:])
+
+    if sys.argv[1] in ("escalation", "escalate"):
+        return run_escalation_scenario(sys.argv[2:])
 
     base = sys.argv[1]
     key = None
