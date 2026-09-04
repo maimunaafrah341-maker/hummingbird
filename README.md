@@ -1,5 +1,8 @@
 # HazardWatch OS
 
+**Live console → https://hummingbird-xi.vercel.app**
+&nbsp;&nbsp;·&nbsp;&nbsp;60-second walkthrough: [`HazardWatch-60s-demo.mp4`](HazardWatch-60s-demo.mp4)
+
 A camera watches a bay. Somebody walks in without a hardhat. Nobody
 presses anything.
 
@@ -15,7 +18,39 @@ this code lives.
 
 ---
 
-## See it work in 30 seconds, with no camera
+## Try it in three ways
+
+| | | |
+|---|---|---|
+| **The console** | [hummingbird-xi.vercel.app](https://hummingbird-xi.vercel.app) | Declare a hazard, review the protocol, hold to broadcast. Nothing to install. |
+| **The autonomous half** | `python bay_twin.py --live demo-01-best-13386074.mp4` | Real YOLO detection on real footage. Watch it decide, and decline to decide. |
+| **Everything, no camera** | `python smoke_test.py incident` | The whole chain against local stubs. No GPU, no model download. |
+
+The deployed stack: **Vercel** serves the console, **Railway** runs the
+incident service. It answers with **no API keys configured at all** —
+severity, steps, contraindication and three languages are deterministic
+and offline. The only key it ever wants is for the advisory copilot.
+
+---
+
+## What it does, in one screen
+
+![The HazardWatch incident console — bay, substance and alert language
+on the left, incident type grid in the centre, response brief and system
+status on the right.](docs-console.png)
+
+An operator declares what a camera cannot see — an unknown chemical, a
+smell, a sound. The console returns a substance-specific protocol with
+the one instruction that matters printed above the rest, in the
+language of the person standing in the bay. **Nothing broadcasts until
+a supervisor holds to confirm.**
+
+Measured against the live deployment: **200 in 0.06 ms**, severity
+`critical`, contraindication present, five steps in Telugu.
+
+---
+
+## Three rehearsals, no camera needed
 
 ```
 pip install -r requirements.txt
@@ -24,10 +59,10 @@ pip install reportlab pyttsx3 gTTS playsound3
 python smoke_test.py incident
 ```
 
-This runs the real trigger, the real incident service, the real PDF
-writer and the real dispatch layer against local stubs. It never
-imports ultralytics, so it needs no camera, no GPU and no model
-download. It speaks out loud and writes a PDF to `outputs/`.
+The real trigger, the real incident service, the real PDF writer and
+the real dispatch layer, against local stubs. It never imports
+ultralytics, so it needs no camera, no GPU and no model download. It
+speaks out loud and writes a PDF to `outputs/`.
 
 Two more, each proving the opposite thing:
 
@@ -110,24 +145,22 @@ the bay while the clock runs.
 
 ---
 
-## The operator console
+## The operator console, in detail
 
-![The HazardWatch incident console — bay, substance and alert language on
-the left, incident type grid in the centre, response brief and system
-status on the right.](docs-console.png)
-
-The human front door. An operator declares what a camera cannot see — an
-unknown chemical, a smell, a sound — and the console produces a protocol
-for review. It is the same `fire_incident()` path the camera uses; only
-the `source` field differs.
+The human front door, and the same `fire_incident()` path the camera
+uses — only the `source` field differs. Nothing downstream can tell a
+button press from a detection, which is the point.
 
 Three things on this screen are load-bearing, and two of them were added
 after a review flagged them:
 
 **Nothing broadcasts on one press.** The button generates a *draft*.
-A supervisor review screen shows it in full, and broadcasting requires
-typing `DECLARE BAY-1`, derived from the selected bay, so a confirm
-cannot be muscle memory. One button that both generated a protocol and
+A supervisor review screen shows it in full, and broadcasting takes a
+deliberate **press and hold** — release early and it cancels. Holding
+was chosen over a typed confirmation for a reason that only shows up
+on site: an operator standing in a bay with a chlorine leak is wearing
+gloves, and asking them to type is asking them to take the gloves off
+during a gas release. One button that both generated a protocol and
 broadcast it to a plant was an irreversible action with nobody in the
 loop.
 
@@ -277,7 +310,7 @@ is an estimate, and anything that could not be measured says so.
 | Detection accuracy | [EVAL-ACCURACY.md](EVAL-ACCURACY.md) | `python eval_accuracy.py --data <data.yaml> --split test` |
 | The language service | [EVAL.md](EVAL.md) | — |
 
-**190 of 190 checks pass**, across eleven suites, each running as its own
+**201 of 201 checks pass**, across eleven suites, each running as its own
 process so none of them can pass on state another one left behind.
 
 Accuracy, on the Roboflow Construction Site Safety test split
