@@ -23,6 +23,7 @@ import uuid
 
 import requests
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -60,6 +61,29 @@ API_KEY = os.getenv("API_KEY") or None
 # before the port opens is what gets a container killed on a small
 # host. See EVAL.md.
 WARM_UP = os.getenv("WARM_UP", "").strip() == "1"
+
+# Browser origins allowed to call this API. Comma-separated; "*" allows
+# any origin.
+#
+# This exists because a browser, not the caller, enforces the rule: a
+# page served from one origin cannot read a response from another
+# unless the server says it may. No amount of frontend work can get
+# around that, so it has to be decided here.
+#
+# The default names the deployed console so a fresh deployment works
+# without configuration, but it is only a default -- CORS_ORIGINS
+# replaces it entirely. Vercel issues a new hostname for every preview
+# deployment, so a preview build that is not listed here will be
+# blocked; add it to the env var, or set "*" for a demo where the API
+# is open anyway.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "https://hummingbird-j1dpu9frm-humming-bird1.vercel.app",
+    ).split(",")
+    if origin.strip()
+]
 
 
 logging.basicConfig(
@@ -130,6 +154,34 @@ async def log_requests(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
 
     return response
+
+
+# Added AFTER log_requests deliberately: Starlette makes the
+# last-registered middleware the outermost one, so this wraps the
+# logger rather than sitting inside it. That ordering is what puts CORS
+# headers on error responses too -- including the 500 that log_requests
+# builds when something throws. Inside, a browser would be told nothing
+# about why a failed request failed, which is the exact case somebody
+# is debugging when they need the header most.
+#
+# allow_credentials stays False: this API authenticates with an
+# X-API-Key header, not cookies, so it never needs credentialed
+# requests -- and "*" plus credentials is a combination browsers reject
+# outright.
+#
+# X-Request-ID is exposed because API_CONTRACT.md tells callers to
+# quote it when reporting a problem, and by default a browser will not
+# let page JavaScript read a response header at all.
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-API-Key"],
+        expose_headers=["X-Request-ID"],
+        max_age=600,
+    )
 
 
 def require_key(x_api_key):
