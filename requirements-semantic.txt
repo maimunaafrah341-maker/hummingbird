@@ -1,0 +1,4 @@
+# The semantic tier for romanized Hindi/Telugu. Needs ~1 GB RAM at
+# runtime -- see EVAL.md. Install on top of requirements.txt.
+-r requirements.txt
+sentence-transformers>=3.0.0
