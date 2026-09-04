@@ -890,7 +890,19 @@ export default function Home() {
       if (result.ok) {
         const data = await result.json();
         if (data?.severity && Array.isArray(data?.steps) && data?.spoken_alert) {
-          response = data as IncidentResponse;
+          // Normalised once, here, at the only place a backend response
+          // enters this console.
+          //
+          // Every backend in this project returns severity lower case
+          // ("critical"), and the UI compared it against "CRITICAL".
+          // The comparison silently failed, so a CRITICAL chlorine
+          // incident rendered with the styling of a routine one -- the
+          // single case where the screen most needs to look different,
+          // looking the same. Nothing threw and nothing logged.
+          response = {
+            ...data,
+            severity: String(data.severity).toUpperCase() as Severity,
+          } as IncidentResponse;
           live = true;
         } else {
           console.error("[incident] backend answered %s but the body did not match the expected shape (severity, steps[], spoken_alert):", result.status, data);
