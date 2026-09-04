@@ -369,3 +369,84 @@ select { -webkit-tap-highlight-color: transparent; }
   line-height: 1.55;
   color: #7c8698 !important;
 }
+
+/* --- Supervisor review: the step between generating a protocol and
+   broadcasting it. Added after review feedback flagged the single
+   irreversible-looking trigger. --- */
+
+.review-shell { display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px 70px; overflow-y: auto; }
+.review-panel {
+  position: relative; z-index: 2; width: 100%; max-width: 720px;
+  background: #10151b; border: 1px solid #232b35; border-radius: 4px;
+  padding: 30px 32px 32px;
+}
+.review-head { border-bottom: 1px solid #232b35; padding-bottom: 18px; margin-bottom: 20px; }
+.review-head h1 { margin: 8px 0 8px; font-size: 27px; letter-spacing: -0.01em; }
+.review-head p { margin: 0; color: #8792a0; font-size: 14px; line-height: 1.6; }
+
+.review-fallback {
+  display: flex; gap: 11px; align-items: flex-start;
+  background: rgba(224,72,77,.12); border: 1px solid #e0484d;
+  border-radius: 3px; padding: 12px 14px; margin-bottom: 20px;
+  color: #ffd0d1; font-size: 13.5px; line-height: 1.55;
+}
+.review-fallback svg { flex: 0 0 auto; margin-top: 2px; }
+
+.review-severity { margin-bottom: 18px; }
+/* Severity is stated in words and marked with a glyph. Colour is a
+   reinforcement here, never the only carrier. */
+.sev-chip {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 6px 13px; border-radius: 2px; font-size: 12px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; border: 1px solid;
+}
+.sev-critical { color: #ff9a9d; border-color: #e0484d; background: rgba(224,72,77,.14); }
+.sev-high     { color: #f0b45f; border-color: #d99a2b; background: rgba(217,154,43,.13); }
+.sev-medium   { color: #7fd3a3; border-color: #3fa96b; background: rgba(63,169,107,.13); }
+.sev-low      { color: #8fa3bb; border-color: #4c6076; background: rgba(76,96,118,.16); }
+
+.review-sub {
+  font-size: 10.5px; letter-spacing: .15em; text-transform: uppercase;
+  color: #78828f; font-weight: 600; margin: 22px 0 10px;
+}
+.review-steps { margin: 0; padding-left: 22px; }
+.review-steps li { margin-bottom: 9px; font-size: 15px; line-height: 1.55; }
+.review-spoken {
+  margin: 0; padding: 12px 14px; background: #161c24; border-left: 2px solid #3d4855;
+  font-size: 15px; font-style: italic; color: #c2ccd8; line-height: 1.55;
+}
+
+.provenance { margin-top: 24px; padding: 15px 16px; background: #141a21; border: 1px solid #222a34; border-radius: 3px; }
+.provenance-row { display: flex; gap: 14px; padding: 5px 0; font-size: 13px; }
+.provenance-row span { flex: 0 0 118px; color: #78828f; }
+.provenance-row strong { color: #c2ccd8; font-weight: 500; }
+.provenance-note { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #222a34; font-size: 12.5px; color: #96a0ae; line-height: 1.55; }
+
+.review-confirm { margin-top: 26px; padding-top: 22px; border-top: 1px solid #232b35; }
+.review-confirm label { display: block; font-size: 14px; color: #c2ccd8; margin-bottom: 9px; }
+.review-confirm code { background: #1c232c; border: 1px solid #2c3540; padding: 2px 8px; border-radius: 2px; color: #fff; font-weight: 600; letter-spacing: .05em; }
+.declare-input {
+  width: 100%; padding: 11px 13px; background: #0c1116; border: 1px solid #2c3540;
+  border-radius: 3px; color: #e6ebf1; font-family: inherit; font-size: 15px;
+  letter-spacing: .06em;
+}
+.declare-input:focus-visible { outline: 2px solid #d99a2b; outline-offset: 1px; border-color: #d99a2b; }
+.declare-help { margin: 9px 0 0; font-size: 12.5px; color: #78828f; line-height: 1.5; }
+
+.review-actions { display: flex; gap: 11px; margin-top: 18px; }
+.btn-cancel, .btn-broadcast {
+  padding: 12px 20px; border-radius: 3px; font-family: inherit; font-size: 12px;
+  font-weight: 700; letter-spacing: .13em; text-transform: uppercase; cursor: pointer;
+}
+.btn-cancel { background: transparent; border: 1px solid #2c3540; color: #96a0ae; }
+.btn-cancel:hover { border-color: #3d4855; color: #c2ccd8; }
+.btn-broadcast { flex: 1; background: #e0484d; border: 1px solid #e0484d; color: #fff; }
+.btn-broadcast:hover:not(:disabled) { background: #ef565b; }
+.btn-broadcast:disabled { background: #1c232c; border-color: #2c3540; color: #6b7484; cursor: not-allowed; }
+.btn-cancel:focus-visible, .btn-broadcast:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Keyboard users could not see where they were anywhere on the console. */
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
+  outline: 2px solid #d99a2b;
+  outline-offset: 2px;
+}
