@@ -89,6 +89,16 @@ def dataset_names(data_yaml):
     """Class names from a dataset yaml, as {index: name}."""
 
     config = _load_yaml(data_yaml)
+
+    # yaml.safe_load returns whatever the file holds -- None for an empty
+    # file, a list for a bare sequence. Calling .get() on either is an
+    # AttributeError several frames from the actual problem, so check the
+    # shape here and say which file is wrong.
+    if not isinstance(config, dict):
+        raise RuntimeError(
+            "%s does not contain a YAML mapping (got %s) -- this should be a "
+            "dataset yaml with a 'names' key" % (data_yaml, type(config).__name__))
+
     names = config.get("names")
 
     if isinstance(names, dict):
