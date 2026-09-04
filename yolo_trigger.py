@@ -37,6 +37,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -185,7 +186,14 @@ def substance_code_for(substance):
 # Read timeout. The incident service may call an LLM, so this is
 # generous; a camera thread blocking for 30s is better than an incident
 # silently dropped.
-HTTP_TIMEOUT = float(os.getenv("HAZARDWATCH_TIMEOUT", "30"))
+# 90s, not 30: the deployed service can take that long for a single
+# call, and a client that gives up early does not free the provider
+# rate limit -- the abandoned request keeps consuming it server-side.
+# Giving up early therefore costs a lost incident AND the quota.
+#
+# This is only safe because the camera no longer waits on it: see
+# fire_incident_async().
+HTTP_TIMEOUT = float(os.getenv("HAZARDWATCH_TIMEOUT", "90"))
 
 
 def log(message):
@@ -346,6 +354,49 @@ def build_incident_request(violation, zone, source, confidence=None,
     return event
 
 
+# ============================================================
+# ONE /incident AT A TIME
+# ============================================================
+#
+# Measured against the deployed service: six requests fired back to
+# back had **five rejected with 429**. The cause is not our request
+# rate in the abstract -- it is that an abandoned request keeps
+# consuming the provider's rate limit server-side after our own
+# timeout has given up waiting on it. Once sent, there is no way to
+# cancel it from this side.
+#
+# So the only pacing that actually works is to never have a second
+# request in flight. This gate holds every caller -- camera, kiosk,
+# any future thread -- behind a single lock for the whole round trip,
+# releasing only when the current call has fully returned: success,
+# 503, or client timeout.
+#
+# **It is process-local, and that is a real limit.** Two bays watched
+# by two `yolo_trigger` processes do not queue behind each other. One
+# process watching several zones does. Anything wider has to be
+# serialised on the service side.
+_INCIDENT_GATE = threading.Lock()
+_INCIDENT_WAITING = 0
+_INCIDENT_WAITING_LOCK = threading.Lock()
+
+
+def incident_queue_depth():
+    """
+    How many callers are queued behind the one in flight.
+
+    For an operator-facing message -- "processing previous alert..." --
+    rather than for control flow.
+    """
+
+    return _INCIDENT_WAITING
+
+
+def incident_busy():
+    """True while a call is in flight or waiting to be."""
+
+    return _INCIDENT_WAITING > 0 or _INCIDENT_GATE.locked()
+
+
 def post_incident(event, base=None, key=None, timeout=HTTP_TIMEOUT):
     """
     POST the event. Returns (status, parsed_body). Never raises.
@@ -353,6 +404,9 @@ def post_incident(event, base=None, key=None, timeout=HTTP_TIMEOUT):
     Never raising is the point: a camera loop that dies because the
     incident service blipped is worse than one that logs the blip and
     keeps watching the bay.
+
+    Serialised: see the gate above. A caller that arrives while another
+    request is in flight waits for it rather than racing it.
     """
 
     base = (base or INCIDENT_API).rstrip("/")
@@ -365,20 +419,36 @@ def post_incident(event, base=None, key=None, timeout=HTTP_TIMEOUT):
     if key or API_KEY:
         request.add_header("X-API-Key", key or API_KEY)
 
+    global _INCIDENT_WAITING
+
+    with _INCIDENT_WAITING_LOCK:
+        _INCIDENT_WAITING += 1
+        queued = _INCIDENT_WAITING > 1
+
+    if queued:
+        log("  waiting for the previous /incident to return "
+            "(%d queued)" % (_INCIDENT_WAITING - 1))
+
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read().decode())
+        with _INCIDENT_GATE:
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return response.status, json.loads(response.read().decode())
 
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode()
+            except urllib.error.HTTPError as e:
+                raw = e.read().decode()
 
-        try:
-            return e.code, json.loads(raw)
-        except ValueError:
-            return e.code, raw
+                try:
+                    return e.code, json.loads(raw)
+                except ValueError:
+                    return e.code, raw
 
-    except Exception as e:
-        return None, "%s: %s" % (type(e).__name__, e)
+            except Exception as e:
+                return None, "%s: %s" % (type(e).__name__, e)
+
+    finally:
+        with _INCIDENT_WAITING_LOCK:
+            _INCIDENT_WAITING -= 1
 
 
 def fire_incident(violation, zone, source="kiosk", confidence=None,
@@ -489,6 +559,26 @@ def dispatch_downstream_async(result, evidence=None):
     import queue
     import threading
 
+    _enqueue(lambda: dispatch_downstream(result, evidence=evidence),
+             "downstream")
+
+
+def _enqueue(job, label):
+    """
+    Put one job on the single worker.
+
+    One worker, not one thread per job, for two independent reasons.
+    The TTS engine is a process-global that must not be driven from two
+    threads at once -- and /incident must have at most one request in
+    flight, because an abandoned one keeps consuming the provider's
+    rate limit. A single worker gives both properties for free: every
+    job runs to completion before the next one starts.
+    """
+
+    global _downstream_queue, _downstream_worker
+
+    import queue
+
     if _downstream_queue is None:
         _downstream_queue = queue.Queue()
 
@@ -501,19 +591,48 @@ def dispatch_downstream_async(result, evidence=None):
                     return
 
                 try:
-                    dispatch_downstream(item[0], evidence=item[1])
+                    item[0]()
                 except Exception as e:
-                    log("  downstream failed: %s: %s" % (type(e).__name__, e))
+                    log("  %s failed: %s: %s" % (item[1], type(e).__name__, e))
                 finally:
                     _downstream_queue.task_done()
 
         _downstream_worker = threading.Thread(target=worker, daemon=True)
         _downstream_worker.start()
 
-    _downstream_queue.put((result, evidence))
+    _downstream_queue.put((job, label))
 
 
-def drain_downstream(timeout=90):
+def fire_incident_async(violation, zone, evidence=None, downstream=True,
+                        **kwargs):
+    """
+    Open an incident without making the camera wait for it.
+
+    fire_incident() is a blocking HTTP call that can now take up to 90
+    seconds. Called inline -- as it used to be -- one incident stalls
+    the loop for that long, and a frame in which three violations fire
+    at once stalls it for three times that. The bay goes unwatched for
+    minutes, which is the exact failure this whole project exists to
+    prevent.
+
+    So the POST goes on the same single worker as the alerts. The
+    camera returns to the next frame immediately, and because there is
+    only one worker the incidents still reach the service strictly one
+    at a time.
+    """
+
+    def job():
+        result = fire_incident(violation, zone, **kwargs)
+
+        if downstream:
+            dispatch_downstream(result, evidence=evidence)
+
+        return result
+
+    _enqueue(job, "incident")
+
+
+def drain_downstream(timeout=None):
     """
     Wait for queued alerts to finish. Called when the loop ends so a
     clip that stops does not cut off the announcement it just triggered.
@@ -521,6 +640,12 @@ def drain_downstream(timeout=90):
 
     if _downstream_queue is None:
         return
+
+    # A queued incident can take HTTP_TIMEOUT on its own before its
+    # alert even starts, so a fixed 90 would cut off exactly the slow
+    # calls this queue exists to accommodate.
+    if timeout is None:
+        timeout = HTTP_TIMEOUT + 60
 
     pending = _downstream_queue.unfinished_tasks
 
@@ -817,16 +942,15 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
                 if evidence:
                     log("  evidence: %s" % os.path.basename(evidence))
 
-                result = fire_incident(
+                # Queued, not inline: see fire_incident_async. The POST
+                # itself is what used to block here, not just the alert.
+                fire_incident_async(
                     violation, zone, source="camera",
                     confidence=seen[violation], substance=substance,
                     language=language, camera_id=str(source_index),
                     base=base, key=key,
+                    evidence=evidence, downstream=downstream,
                 )
-
-                if downstream:
-                    # Queued, not inline: see dispatch_downstream_async.
-                    dispatch_downstream_async(result, evidence=evidence)
 
             if show:
                 cv2.imshow("HazardWatch %s" % zone,
@@ -843,10 +967,10 @@ def run_camera(zone, source_index=0, base=None, key=None, substance=None,
         if show:
             cv2.destroyAllWindows()
 
-        # Let queued alerts finish. A clip that ends mid-announcement
-        # would otherwise cut off the thing it just triggered.
-        if downstream:
-            drain_downstream()
+        # Always, not just when downstream is on: the incident POSTs
+        # themselves are on this queue now, so exiting without draining
+        # would discard incidents that were triggered but never sent.
+        drain_downstream()
 
     if router is not None:
         counts = router.summary()
@@ -1219,6 +1343,80 @@ def selftest():
     check("incident_type stays within MAX_FIELD_CHARS",
           len(wire["incident_type"]) <= 200,
           "%d chars" % len(wire["incident_type"]))
+
+    # -- one /incident in flight, ever -------------------------------
+    #
+    # Not a style preference. Six back-to-back requests to the deployed
+    # service had five rejected with 429, because an abandoned request
+    # keeps consuming the provider's rate limit server-side after our
+    # own timeout gives up on it. The stub below fails loudly if two
+    # requests ever overlap, which is the only thing that actually
+    # proves the gate.
+
+    import http.server
+    import threading as _t
+
+    overlap = {"now": 0, "peak": 0, "served": 0}
+    seen_lock = _t.Lock()
+
+    class _Serial(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            with seen_lock:
+                overlap["now"] += 1
+                overlap["peak"] = max(overlap["peak"], overlap["now"])
+
+            time.sleep(0.12)          # long enough for a racer to arrive
+
+            with seen_lock:
+                overlap["now"] -= 1
+                overlap["served"] += 1
+
+            body = b'{"severity":"high","steps":["x"],"spoken_alert":"x"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Serial)
+    port = server.server_address[1]
+    _t.Thread(target=server.serve_forever, daemon=True).start()
+
+    base = "http://127.0.0.1:%d" % port
+    started = time.time()
+    threads = [_t.Thread(target=post_incident,
+                         args=({"bay_id": "BAY-%d" % i,
+                                "incident_type": "NO-Hardhat"},),
+                         kwargs={"base": base})
+               for i in range(6)]
+
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join(timeout=15)
+
+    elapsed = time.time() - started
+    server.shutdown()
+
+    check("six concurrent callers all get through",
+          overlap["served"] == 6, "%d served" % overlap["served"])
+
+    check("never two /incident requests in flight",
+          overlap["peak"] == 1,
+          "peak concurrency %d -- 429 storm impossible" % overlap["peak"])
+
+    check("they queued rather than raced",
+          elapsed >= 6 * 0.12,
+          "%.2fs for 6 x 0.12s -- serial, not parallel" % elapsed)
+
+    check("the gate is released after every call",
+          not incident_busy() and incident_queue_depth() == 0,
+          "depth back to 0")
+
 
     print("\n%d/%d gate checks passed" % (sum(checks), len(checks)))
     return 0 if all(checks) else 1
