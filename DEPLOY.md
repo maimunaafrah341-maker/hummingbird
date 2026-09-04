@@ -110,48 +110,48 @@ potential entrypoints:
   incident_api.py (variable: app)
 ```
 
-Vercel found **two** apps and refused to guess. It is the same trap as
-the Render Docker command, in different clothing — and note that
-Vercel's own suggested fix names the wrong one:
+**This project is the frontend. That error means its Root Directory is
+blank.**
+
+Vercel only looked for Python because a blank root directory sent it to
+the repo root, where `requirements.txt` and two FastAPI apps live. It
+never reached `frontend/`.
+
+**Fix: set Root Directory to `frontend`.** Nothing else. The entrypoint
+question then never comes up, because Vercel is building a Vite app.
+
+### Do NOT add the pyproject.toml Vercel suggests
+
+Vercel's own error offers a fix:
 
 > Add this to your pyproject.toml: `entrypoint = "api:app"`
 
-`api:app` is the **language service**. Taking that suggestion gives a
-green deploy that 404s every `/incident`.
+Do not take it, for two separate reasons.
 
-`pyproject.toml` is now in the repo with the right answer:
+**It names the wrong app.** `api:app` is the language service --
+`/health`, `/detect`, `/translate`. It has no `/incident`.
 
-```toml
-[tool.vercel]
-entrypoint = "incident_api:app"
-```
+**And even with the right app, it makes things worse.** Pinning any
+entrypoint turns this loud failure into a quiet success: Vercel would
+cheerfully deploy the *backend* to a project meant to serve the
+frontend, and the build log would be green. A deploy that fails and
+tells you the root directory is wrong is more useful than one that
+succeeds at the wrong job.
 
-Pull `main` and redeploy. Nothing else needs setting.
+This repo deliberately ships **no** `pyproject.toml` for that reason.
+The error is the diagnostic.
 
-### But first — is this project meant to be the backend?
+### And the backend could not run there anyway
 
-If that Vercel project was meant to serve the **frontend**, the real
-fix is different: set **Root Directory** to `frontend`. Vercel only
-tried to build Python because the root directory is blank, so it looked
-at the repo root and found a Python project.
+Bay Twin's `GET /twin/stream` is a long-lived server-sent-events
+connection, and the event bus behind it is in-process memory.
+Serverless functions hold neither: the connection is cut at the
+function timeout, and two requests can land on two instances that share
+no state. The page would load and then sit empty.
 
-One Vercel project cannot be both.
+**Vercel for the frontend, Render for the backend.** That is the split
+this document assumes throughout.
 
-### And Bay Twin will not work on Vercel
-
-`GET /twin/stream` is a long-lived server-sent-events connection, and
-the event bus behind it is in-process memory. Serverless functions hold
-neither: the connection is cut at the function timeout, and two
-requests can land on two instances that share no state. The page will
-load and then sit empty.
-
-**So put the backend on Render** (a long-running container, section
-above) and the frontend on Vercel. That is the split the rest of this
-document assumes. The `pyproject.toml` is there so a Vercel backend
-deploy at least reaches the right app if somebody tries it — not
-because it is the recommended host.
-
----
 
 ## Frontend — Vercel or Netlify
 
