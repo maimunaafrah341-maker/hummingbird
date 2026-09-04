@@ -1,9 +1,11 @@
 # Measured behaviour — `language.py`
 
-Every number here came from running the code, on 2026-09-03, on the
-development laptop (Windows 11, CPU only). No number in this file is an
-estimate. Re-run the measurements before quoting them on different
-hardware — the ratios hold, the absolute values will not.
+Every number here came from running the code — the `language.py`
+measurements on 2026-09-03 on the development laptop (Windows 11, CPU
+only), and the deployed-footprint measurements on 2026-09-04 in the
+built container. No number in this file is an estimate. Re-run the
+measurements before quoting them on different hardware — the ratios
+hold, the absolute values will not.
 
 ## Cost
 
@@ -14,7 +16,7 @@ hardware — the ratios hold, the absolute values will not.
 | First Latin-script detection (triggers the load) | **22.4 s** warm disk, **62 s** first ever run |
 | Steady-state detection, any input | **21–28 ms** |
 | Peak RSS with the model resident | **821 MB** |
-| Peak RSS without `sentence-transformers` installed | ~17 MB |
+| Peak RSS without `sentence-transformers` installed | ~17 MB — **no longer a buildable configuration**, see below |
 
 The RSS breakdown, since it decides where this can be hosted:
 
@@ -28,6 +30,49 @@ baseline python      :   17 MB
 **The model, not the code, is the entire hosting constraint.** 821 MB
 does not fit on a 512 MB free instance, and no amount of tuning the
 Python changes that.
+
+### The 17 MB configuration no longer exists
+
+That bottom row was real when it was measured, and it is worth keeping
+as the breakdown's baseline — but it is no longer a deployment you can
+build. `sentence-transformers` and `faiss-cpu` became base dependencies
+when `/incident` was added, because retrieval is what that endpoint
+*is* rather than an optional tier it can degrade without. The
+`SEMANTIC_TIER=1` build arg that used to produce a torch-free image is
+gone from the `Dockerfile` for the same reason.
+
+The distinction the row was describing still holds at *runtime*, and
+that part has not changed: the model still loads lazily, a deployment
+that never sees Latin-script input never pays for it, and
+`_ensure_model()` still degrades honestly when it cannot load. What is
+gone is the ability to build an image that never had the option.
+
+### Deployed footprint (2026-09-04, in the container)
+
+These cover the whole service — API, embedding model and FAISS index —
+not `language.py` alone, and were measured inside the built image after
+serving one `/incident` request:
+
+| What | Measured |
+|---|---|
+| Memory charged to the container | **733 MiB** (`docker stats`) |
+| VmRSS of the `uvicorn` process | **955 MB** |
+| Image size | **2.97 GB**, of which ~470 MB is the baked model |
+
+The two memory figures differ because they count different things, and
+the smaller is the one to size against: `docker stats` reports what the
+cgroup is charged, which is what the OOM killer acts on, while VmRSS
+also counts shared file-backed pages mapped from the image layers. Both
+are quoted because the lower one alone flatters the image and the
+higher one alone overstates the requirement.
+
+Note that 733 MiB for the full service sits *below* the 821 MB measured
+for the embedding model alone on Windows above — that is a
+platform difference, not a contradiction, and it is the reason this
+file says to re-measure rather than to quote.
+
+Treat **1 GB as the floor and 2 GB as comfortable**. The 512 MB
+instance remains out of the question.
 
 ## The two tiers, and why the split exists
 
