@@ -123,21 +123,41 @@ FEATHERLESS_MODELS = [
 ]
 
 
-def _call_openai_compatible_api(base_url, api_key, model, prompt, timeout=30):
+def _call_openai_compatible_api(base_url, api_key, model, prompt, timeout=30,
+                                system=None, temperature=None, max_tokens=None):
     """
-    Shared request shape for Groq and OpenRouter -- both are
-    OpenAI-compatible chat-completions endpoints, so one function
-    covers both rather than duplicating the same requests.post() call
-    twice with different URLs.
+    Shared request shape for Featherless, Groq and OpenRouter -- all
+    three are OpenAI-compatible chat-completions endpoints, so one
+    function covers them rather than duplicating the same
+    requests.post() call with different URLs.
+
+    `system` is a real system message rather than text glued onto the
+    front of the prompt. The difference matters for the copilot, whose
+    system message is a set of prohibitions -- never issue orders,
+    never claim an action was taken -- and a model weights those more
+    heavily in the role they belong to than in the middle of a user
+    turn where they read as suggestions.
     """
+
+    messages = []
+
+    if system:
+        messages.append({"role": "system", "content": system})
+
+    messages.append({"role": "user", "content": prompt})
+
+    body = {"model": model, "messages": messages}
+
+    if temperature is not None:
+        body["temperature"] = temperature
+
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
 
     response = requests.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-        },
+        json=body,
         timeout=timeout,
     )
 
@@ -178,7 +198,8 @@ LANGUAGE_NAMES = {
 }
 
 
-def generate_response(prompt):
+def generate_response(prompt, system=None, temperature=None,
+                      max_tokens=None, want_provider=False):
     """
     Send the grounded Athena prompt to a model and return the
     generated user-facing response.
@@ -212,12 +233,16 @@ def generate_response(prompt):
         for model in FEATHERLESS_MODELS:
 
             try:
-                return _call_openai_compatible_api(
+                answer = _call_openai_compatible_api(
                     FEATHERLESS_BASE_URL,
                     FEATHERLESS_API_KEY,
                     model,
                     prompt,
+                    system=system,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 )
+                return (answer, "featherless:%s" % model) if want_provider else answer
 
             except Exception as e:
                 last_error = e
@@ -232,12 +257,16 @@ def generate_response(prompt):
     if GROQ_API_KEY:
 
         try:
-            return _call_openai_compatible_api(
+            answer = _call_openai_compatible_api(
                 "https://api.groq.com/openai/v1",
                 GROQ_API_KEY,
                 GROQ_MODEL,
                 prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
+            return (answer, "groq:%s" % GROQ_MODEL) if want_provider else answer
 
         except Exception as e:
             last_error = e
@@ -250,7 +279,13 @@ def generate_response(prompt):
             try:
                 response = client.models.generate_content(
                     model=model,
-                    contents=prompt,
+                    # This client call takes no system role, so the
+                    # instructions go in front of the prompt. Said here
+                    # rather than silently dropping `system`, which
+                    # would quietly relax the copilot's prohibitions on
+                    # exactly the tier nobody is watching.
+                    contents=("%s\n\n%s" % (system, prompt))
+                             if system else prompt,
                 )
 
                 if not response.text:
@@ -258,7 +293,8 @@ def generate_response(prompt):
                         "Gemini returned an empty response."
                     )
 
-                return response.text.strip()
+                text = response.text.strip()
+                return (text, "gemini:%s" % model) if want_provider else text
 
             except Exception as e:
                 last_error = e
@@ -270,12 +306,16 @@ def generate_response(prompt):
         for model in OPENROUTER_MODELS:
 
             try:
-                return _call_openai_compatible_api(
+                answer = _call_openai_compatible_api(
                     "https://openrouter.ai/api/v1",
                     OPENROUTER_API_KEY,
                     model,
                     prompt,
+                    system=system,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 )
+                return (answer, "openrouter:%s" % model) if want_provider else answer
 
             except Exception as e:
                 last_error = e
