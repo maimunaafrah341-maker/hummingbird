@@ -30,6 +30,8 @@ import {
   Wind,
 } from "lucide-react";
 
+import { apiUrl } from "@/api";
+
 type IncidentType = "Spill" | "Vapor Release" | "Skin Contact" | "Fire Flare" | "Gas Leak" | "Thermal Runaway" | "Unknown Chemical" | "Structural Failure";
 type Severity = "HIGH" | "CRITICAL" | "MEDIUM";
 
@@ -418,7 +420,7 @@ export default function Home() {
     let response = defaultResponse;
 
     try {
-      const result = await fetch("/incident", {
+      const result = await fetch(apiUrl("/incident"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
