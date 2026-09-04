@@ -82,6 +82,76 @@ SEVERITY_COLOURS = {
 UNKNOWN_SEVERITY_COLOUR = colors.HexColor("#52525B")
 
 
+# Fonts that can actually draw Devanagari, Bengali, Telugu and Arabic.
+# reportlab's built-in Helvetica cannot: it is WinAnsi-encoded, so a
+# Hindi step silently renders as nothing at all. On a report whose whole
+# purpose is telling someone what to do about a hazard, dropping the
+# instructions and still producing a valid-looking PDF is the worst
+# available outcome, so this is checked and reported rather than hoped.
+#
+# (name, path, subfont index for .ttc collections)
+UNICODE_FONT_CANDIDATES = [
+    ("NirmalaUI", r"C:\Windows\Fonts\Nirmala.ttc", 0),      # Indic scripts
+    ("ArialUnicode", r"C:\Windows\Fonts\ARIALUNI.TTF", None),
+    ("SegoeUI", r"C:\Windows\Fonts\segoeui.ttf", None),     # Arabic/Urdu
+    ("NotoSans", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", None),
+    ("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", None),
+]
+
+_unicode_font = "unchecked"   # cached: font name, or None if none worked
+
+
+def unrenderable(text):
+    """Characters the built-in Helvetica cannot draw. Empty means fine."""
+
+    bad = set()
+
+    for char in str(text or ""):
+        try:
+            char.encode("cp1252")       # what WinAnsi/Helvetica covers
+        except UnicodeEncodeError:
+            bad.add(char)
+
+    return bad
+
+
+def unicode_font():
+    """
+    Register and return a font that can draw non-Latin scripts, or None.
+
+    Cached: registration is idempotent but the file probing is not free,
+    and this is called per report.
+    """
+
+    global _unicode_font
+
+    if _unicode_font != "unchecked":
+        return _unicode_font
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    _unicode_font = None
+
+    for name, path, subfont in UNICODE_FONT_CANDIDATES:
+        if not os.path.exists(path):
+            continue
+
+        try:
+            if subfont is None:
+                pdfmetrics.registerFont(TTFont(name, path))
+            else:
+                pdfmetrics.registerFont(TTFont(name, path, subfontIndex=subfont))
+
+            _unicode_font = name
+            break
+
+        except Exception:
+            continue      # try the next candidate; absence is handled by the caller
+
+    return _unicode_font
+
+
 def resolve_citation(event, response):
     """
     Return (citation, title, source).
@@ -175,10 +245,30 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
     colour = SEVERITY_COLOURS.get(severity.lower(), UNKNOWN_SEVERITY_COLOUR)
     code, title, source = resolve_citation(event, response)
 
+    # Does anything on this page need a script Helvetica cannot draw?
+    page_text = " ".join(str(v) for v in list(event.values()) + list(response.values()))
+    exotic = unrenderable(page_text)
+    body_font = None
+    font_warning = None
+
+    if exotic:
+        body_font = unicode_font()
+
+        if body_font is None:
+            # Say so on the page. A report that silently omits the
+            # instructions is worse than one that admits it could not
+            # print them.
+            font_warning = (
+                "This report contains text in a script this machine has no "
+                "font for (%s). Those passages are missing from the page "
+                "below. Install a Unicode font, or read this incident in "
+                "English." % ", ".join(sorted(exotic))[:80])
+
     base = getSampleStyleSheet()
 
     title_style = ParagraphStyle(
         "title", parent=base["Title"], fontSize=19, leading=23,
+        fontName=body_font or base["Title"].fontName,
         alignment=TA_LEFT, spaceAfter=2, textColor=colors.HexColor("#18181B"))
 
     subtitle_style = ParagraphStyle(
@@ -186,18 +276,20 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
         textColor=colors.HexColor("#71717A"))
 
     heading_style = ParagraphStyle(
-        "heading", parent=base["Normal"], fontName="Helvetica-Bold",
+        "heading", parent=base["Normal"], fontName=body_font or "Helvetica-Bold",
         fontSize=10, leading=14, spaceBefore=13, spaceAfter=5,
         textColor=colors.HexColor("#3F3F46"))
 
     body_style = ParagraphStyle(
-        "body", parent=base["Normal"], fontSize=10, leading=14.5)
+        "body", parent=base["Normal"], fontSize=10, leading=14.5,
+        fontName=body_font or base["Normal"].fontName)
 
     step_style = ParagraphStyle(
         "step", parent=body_style, leftIndent=15, spaceAfter=5)
 
     warn_style = ParagraphStyle(
-        "warn", parent=body_style, fontName="Helvetica-Bold",
+        "warn", parent=body_style,
+        fontName=body_font or "Helvetica-Bold",
         textColor=colors.HexColor("#7F1D1D"), fontSize=10.5, leading=15)
 
     footer_style = ParagraphStyle(
@@ -225,6 +317,19 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]))
     story.append(severity_table)
+
+    if font_warning:
+        missing = Table([[Paragraph(font_warning, body_style)]], colWidths=[165 * mm])
+        missing.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FEF9C3")),
+            ("BOX", (0, 0), (-1, -1), 0.9, colors.HexColor("#A16207")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        story.append(Spacer(1, 10))
+        story.append(missing)
 
     # -- the facts ---------------------------------------------------
     def value(*keys, **kwargs):
@@ -428,6 +533,35 @@ def selftest():
     check("accepts a list unchanged",
           _as_steps(["Evacuate", "  Isolate  ", ""]) == ["Evacuate", "Isolate"],
           str(_as_steps(["Evacuate", "  Isolate  ", ""])))
+
+    # -- non-Latin scripts -------------------------------------------
+    # This project's alerts are hi/bn/te/ur. reportlab's built-in
+    # Helvetica is WinAnsi and silently draws nothing for those, so a
+    # Hindi report used to come out as a valid PDF with the safety steps
+    # simply absent. Checked here because "the PDF generated" and "the
+    # instructions are on it" were, for a while, different claims.
+    hindi_steps = ["बे 3 में काम बंद करें।"]
+    hindi = dict(SAMPLE_RESPONSE, steps=hindi_steps,
+                 contraindication="दबाव वाले पानी से न धोएं।")
+
+    check("detects unrenderable text",
+          len(unrenderable(hindi_steps[0])) > 0 and not unrenderable("Bay 3 clear"),
+          "%d chars need a real font" % len(unrenderable(hindi_steps[0])))
+
+    hindi_path = build_dossier(dict(SAMPLE_EVENT, language="hi"), hindi,
+                               filename="selftest_hindi.pdf")
+    embedded = open(hindi_path, "rb").read().decode("latin-1", "ignore")
+    font = unicode_font()
+
+    if font:
+        check("hindi report embeds a usable font", font in embedded,
+              "%s, %.1f KB" % (font, os.path.getsize(hindi_path) / 1024))
+    else:
+        # No Unicode font on this machine. The requirement is then that
+        # the page SAYS the text is missing, not that it renders.
+        check("missing font is declared on the page",
+              "no font for" in embedded or "script this machine" in embedded,
+              "no Unicode font installed; page must admit it")
 
     print("\n%d/%d dossier checks passed" % (sum(checks), len(checks)))
     print("  wrote: %s" % path)

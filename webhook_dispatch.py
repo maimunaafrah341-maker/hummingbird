@@ -53,6 +53,13 @@ DEFAULT_CHANNELS = ("sms", "telegram", "slack")
 # order -- so the body is built to fit one.
 SMS_LIMIT = 160
 
+# But 160 only holds for GSM-7. One character outside it -- any
+# Devanagari, Bengali, Telugu or Arabic, which is most of this project's
+# languages -- re-encodes the whole message as UCS-2 and the real
+# single-segment limit drops to 70. Fitting a Hindi alert to 160 does
+# not produce one segment, it produces three, silently.
+SMS_LIMIT_UNICODE = 70
+
 HTTP_TIMEOUT = float(os.getenv("HAZARDWATCH_WEBHOOK_TIMEOUT", "10"))
 
 # One retry, because demo wifi drops a single request far more often
@@ -66,7 +73,21 @@ RETRY_DELAY = 1.0
 # PAYLOAD
 # ============================================================
 
-def _fit_sms(text, limit=SMS_LIMIT):
+def sms_limit_for(text):
+    """
+    Characters that actually fit in one segment of *this* message.
+
+    ASCII is a deliberately conservative stand-in for GSM-7: the real
+    GSM-7 set includes a few extras (é, Ø, £) but excludes some ASCII
+    punctuation, and getting that boundary subtly wrong costs a segment.
+    Anything non-ASCII is treated as UCS-2, which is correct for every
+    script this project speaks.
+    """
+
+    return SMS_LIMIT if str(text).isascii() else SMS_LIMIT_UNICODE
+
+
+def _fit_sms(text, limit=None):
     """
     Trim to one SMS segment on a word boundary.
 
@@ -74,24 +95,43 @@ def _fit_sms(text, limit=SMS_LIMIT):
     the reader can tell the message is incomplete instead of acting on
     half of it.
 
-    The marker is three ASCII dots, not a "…" character, and that is not
-    a style choice: a single non-GSM-7 character anywhere in the body
-    re-encodes the whole message as UCS-2, which drops the real segment
-    limit from 160 to 70. Using the prettier ellipsis to signal
-    truncation would silently cause the truncation it is warning about.
+    The limit is derived from the text, not fixed at 160: a Hindi alert
+    gets 70. The marker is three ASCII dots rather than "…" for the same
+    reason -- a single non-GSM-7 character re-encodes the whole message
+    and halves its capacity, so using the prettier ellipsis to signal
+    truncation would cause the truncation it is warning about.
     """
 
-    text = " ".join(text.split())
+    text = " ".join(str(text).split())
 
-    if len(text) <= limit:
-        return text, False
+    def cut_to(size):
+        if len(text) <= size:
+            return text, False
 
-    cut = text[:limit - 3]
+        head = text[:size - 3]
 
-    if " " in cut:
-        cut = cut[:cut.rindex(" ")]
+        if " " in head:
+            head = head[:head.rindex(" ")]
 
-    return cut.rstrip(" .,;:") + "...", True
+        return head.rstrip(" .,;:") + "...", True
+
+    if limit is not None:
+        return cut_to(limit)
+
+    # The limit depends on the encoding, and the encoding depends on what
+    # survives the cut -- so try the generous one first and only fall
+    # back if the result really does still need UCS-2.
+    #
+    # This is not a micro-optimisation. An alert whose Hindi tail gets
+    # truncated away is pure ASCII, and charging it the 70-character
+    # unicode limit throws away 90 characters of safety instruction that
+    # would have fitted in the segment perfectly well.
+    body, truncated = cut_to(SMS_LIMIT)
+
+    if body.isascii():
+        return body, truncated
+
+    return cut_to(SMS_LIMIT_UNICODE)
 
 
 def build_alert_payload(event, response, channels=DEFAULT_CHANNELS):
@@ -158,6 +198,11 @@ def build_alert_payload(event, response, channels=DEFAULT_CHANNELS):
             "body": sms_body,
             "characters": len(sms_body),
             "truncated": truncated,
+            # Which limit applied, so a reader can tell 93 characters of
+            # Hindi from 93 characters of English -- they are not the
+            # same message size on the wire.
+            "encoding": "GSM-7" if sms_body.isascii() else "UCS-2",
+            "segment_limit": sms_limit_for(sms_body),
         },
         "telegram": {"chat_id": "@hazardwatch_ops", "parse_mode": "Markdown",
                      "text": rich_body},
@@ -361,8 +406,8 @@ def selftest():
           ", ".join(payload["channels"]))
 
     sms = payload["channels"]["sms"]
-    check("sms fits one segment", sms["characters"] <= SMS_LIMIT,
-          "%d/%d chars" % (sms["characters"], SMS_LIMIT))
+    check("sms fits one segment", sms["characters"] <= sms["segment_limit"],
+          "%d/%d chars, %s" % (sms["characters"], sms["segment_limit"], sms["encoding"]))
     check("sms carries the contraindication", "DO NOT" in sms["body"], sms["body"][:70])
 
     long_body, truncated = _fit_sms("word " * 100)
@@ -377,6 +422,59 @@ def selftest():
 
     short, was_cut = _fit_sms("Short message.")
     check("short sms is untouched", short == "Short message." and not was_cut, short)
+
+    # The multilingual case. One Devanagari character re-encodes the
+    # whole message as UCS-2 and halves the segment, so fitting a Hindi
+    # alert to 160 silently produces three segments, not one.
+    check("unicode text gets the 70-char limit",
+          sms_limit_for("बे 3 hazard") == 70
+          and sms_limit_for("Bay 3 hazard") == 160,
+          "hindi=%d ascii=%d" % (sms_limit_for("बे"), sms_limit_for("Bay")))
+
+    hindi_response = dict(SAMPLE_RESPONSE,
+                          contraindication="दबाव वाले "
+                                           "पानी से रिसाव "
+                                           "को न धोएं। " * 4)
+    hindi_sms = build_alert_payload(SAMPLE_EVENT, hindi_response)["channels"]["sms"]
+    check("hindi sms fits its real segment",
+          hindi_sms["characters"] <= hindi_sms["segment_limit"],
+          "%d/%d chars, %s"
+          % (hindi_sms["characters"], hindi_sms["segment_limit"], hindi_sms["encoding"]))
+
+    # A body that genuinely still carries Devanagari must be capped at 70.
+    devanagari_body, _ = _fit_sms("खतरा " * 40)
+    check("body that stays unicode is capped at 70",
+          len(devanagari_body) <= 70 and not devanagari_body.isascii(),
+          "%d chars, ascii=%s" % (len(devanagari_body), devanagari_body.isascii()))
+
+    # The invariant that actually matters, over every shape of input: a
+    # body never exceeds the segment its own encoding gets. Checked as a
+    # property rather than one hand-picked case, because the interesting
+    # failures are the ones nobody thinks to write a case for.
+    hindi_word = "खतरा "
+    corpus = [
+        "",
+        "Short.",
+        "Bay 3 clear." * 40,
+        hindi_word,
+        hindi_word * 40,
+        "Bay 3 caustic spill. " + hindi_word * 30,
+        hindi_word * 30 + "Bay 3 caustic spill. ",
+        "[HIGH] NO-Hardhat in BAY-3. " + hindi_word * 2,
+        "é" * 200,
+    ]
+
+    overruns = []
+
+    for sample in corpus:
+        body, _ = _fit_sms(sample)
+
+        if len(body) > sms_limit_for(body):
+            overruns.append((len(body), sms_limit_for(body), body[:24]))
+
+    check("no body ever exceeds its own segment", not overruns,
+          "%d inputs checked, %d overruns%s"
+          % (len(corpus), len(overruns), " %s" % overruns[:2] if overruns else ""))
 
     check("marked as simulated", payload["simulated"] is True
           and "No SMS" in payload["note"], payload["note"][:40])
