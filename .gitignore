@@ -19,3 +19,7 @@ outputs/*.json
 # Synthesized speech, keyed by (text, language). Regenerated on demand
 # and deliberately warm before a demo -- see tts_alert.py --prefetch.
 outputs/tts_cache/
+
+# Downloaded eval datasets. ~180MB of images, fetched on demand by
+# eval_accuracy.py --fetch. Never in git.
+datasets/
