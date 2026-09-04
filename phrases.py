@@ -120,6 +120,11 @@ ITEMS = {
         "te": "చేతి తొడుగులు",
         "bn": "দস্তানা (হাতের সুরক্ষা)",
     },
+    "required protective equipment": {
+        "hi": "आवश्यक सुरक्षा उपकरण",
+        "te": "అవసరమైన భద్రతా పరికరాలు",
+        "bn": "প্রয়োজনীয় সুরক্ষা সরঞ্জাম",
+    },
     "eye protection": {
         "hi": "चश्मा (आँखों की सुरक्षा)",
         "te": "కళ్లద్దాలు (కంటి రక్షణ)",
@@ -222,6 +227,11 @@ STEPS = {
         "hi": "सबसे पहले आपूर्ति वाल्व बंद करें।",
         "te": "అన్నిటికంటే ముందు సరఫరా వాల్వ్ మూసివేయండి.",
         "bn": "সবার আগে সরবরাহ ভালভ বন্ধ করুন।",
+    },
+    "Have a competent person assess the hazard before work resumes.": {
+        "hi": "काम दोबारा शुरू करने से पहले किसी सक्षम व्यक्ति से खतरे का आकलन कराएँ।",
+        "te": "పని తిరిగి ప్రారంభించే ముందు సమర్థుడైన వ్యక్తితో ప్రమాదాన్ని అంచనా వేయించండి.",
+        "bn": "কাজ পুনরায় শুরুর আগে একজন যোগ্য ব্যক্তিকে দিয়ে বিপদ মূল্যায়ন করান।",
     },
     "Log the incident and notify the shift safety officer.": {
         "hi": "घटना दर्ज करें और शिफ्ट सुरक्षा अधिकारी को सूचित करें।",
@@ -412,6 +422,15 @@ def selftest():
         # "BAY-1" and would never match a template key.
         english_steps.add("Log the incident and notify the shift safety officer.")
 
+        # The unknown-hazard branch. Every incident type the console
+        # offers -- Spill, Gas Leak, Skin Contact -- is unmapped against
+        # the PPE table, so this is the branch they ALL take, and it was
+        # the one branch the coverage check ignored.
+        generic = incident_api.assess("Spill", "{bay}", None)
+        english_steps.update(generic["_step_templates"])
+        english_items = set()
+        english_items.add(generic["_item"])
+
         missing = sorted(english_steps - set(STEPS))
         check("every rules-table step has an entry", not missing,
               "missing: %s" % (missing[0][:40] if missing else "none"))
@@ -424,7 +443,7 @@ def selftest():
         check("every contraindication has an entry", not missing,
               "missing: %s" % (missing[0][:40] if missing else "none"))
 
-        english_items = {v["label"] for v in incident_api.VIOLATIONS.values()}
+        english_items |= {v["label"] for v in incident_api.VIOLATIONS.values()}
         missing = sorted(english_items - set(ITEMS))
         check("every equipment label has an entry", not missing,
               "missing: %s" % (missing[0][:40] if missing else "none"))
