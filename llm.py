@@ -21,10 +21,10 @@ skipped, so one key is enough to run.
     generate_structured_response(prompt) -> dict
 
 A separate entry point for callers that need a JSON object back rather
-than prose. It goes to Featherless (Qwen2.5-72B-Instruct) and nowhere
-else -- no failover chain -- and retries once with a correction prompt
-if the model returns something that will not parse. Needs
-FEATHERLESS_API_KEY.
+than prose. It tries Groq first and Featherless second, retrying once
+with a correction prompt if a model returns something that will not
+parse, and returns (payload, provider) so the caller can report which
+one answered. Needs GROQ_API_KEY or FEATHERLESS_API_KEY.
 
 The two functions are deliberately independent. generate_response()'s
 three-tier behaviour is what /translate is documented against, so
@@ -279,12 +279,20 @@ def generate_response(prompt):
 # does. This path reuses generate_response()'s GROQ_API_KEY and its
 # _call_openai_compatible_api() helper, and changes neither.
 #
-# Featherless is always attempted first and is never skipped when it is
-# configured -- that ordering is a requirement, not a performance
-# judgement. Groq exists behind it because Featherless's current plan
-# excludes automated API use, so an attempt that fails on
-# authorisation is expected rather than exceptional, and a dispatcher
-# that stops dispatching because of a billing tier is not acceptable.
+# Groq is attempted first, Featherless second. This is the reverse of
+# the original order, changed 2026-09-04 on measurement.
+#
+# Featherless was primary because using it is a project requirement.
+# Measured under conditions that ruled out every cause on our side --
+# five identical requests, five minutes fully idle between each,
+# strictly sequential, zero 429s -- it answered 1 of 5, and all four
+# failures were flat 60s timeouts. A primary provider that answers 20%
+# of the time makes every other request pay a 60s penalty before the
+# fallback even starts.
+#
+# Featherless stays in the chain rather than being removed: it still
+# answers, and when it does it is fast (7.7s, 9.8s, 10.2s measured).
+# It is now the second attempt instead of the tax on the first.
 #
 # This is deliberately narrower than generate_response()'s chain: two
 # providers, not four. A structured response has to arrive in an agreed
@@ -307,24 +315,22 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CORRECTION_ECHO_CHARS = 2000
 
 # Per-provider time budgets, each covering that provider's first
-# attempt AND its correction retry. They are separate because the two
-# providers are not remotely alike in speed, and because a slow
-# Featherless attempt must not eat the time Groq needs to rescue it.
+# attempt AND its correction retry.
 #
-# 60s for Featherless: measured 2026-09-04, its median was under 25s
-# and its slowest SUCCESSFUL call was 42s. Past 60s we would only be
-# buying the pathological tail -- two observed runs of 221s and 242s --
-# which is exactly what the watchdog exists to cut off.
+# 30s for Groq, now the primary: openai/gpt-oss-120b answered between
+# 0.9s and 25s across every call measured. 30s is generous for a
+# structured prompt plus a retry.
 #
-# 30s for Groq: openai/gpt-oss-120b answers /translate prompts in about
-# 1.0s measured. 30s is deliberately generous for a larger structured
-# prompt plus a retry.
+# 30s for Featherless, now the fallback -- cut from 60s on evidence.
+# Every Featherless SUCCESS measured 2026-09-04 landed under 15s (7.7s,
+# 9.8s, 10.2s); every FAILURE was a flat 60s timeout that never
+# converted into an answer. A 30s budget therefore keeps every success
+# we have actually observed and halves the cost of every failure.
 #
-# 60 + 30 = 90, which is the same worst case this function had when it
-# only called Featherless. The fallback costs no additional latency
-# ceiling; it re-divides the budget that was already there.
-FEATHERLESS_DEADLINE = 60
+# 30 + 30 = 60s worst case, down from 90s. Both attempts together are
+# now bounded by less than the old primary alone.
 GROQ_DEADLINE = 30
+FEATHERLESS_DEADLINE = 30
 
 # Do not start a correction retry that cannot finish inside what is
 # left of that provider's budget. Beginning a call whose result nobody
@@ -586,12 +592,12 @@ def generate_structured_response(prompt):
     """
     Get a JSON object out of a model. Returns (payload, provider).
 
-    Featherless first, always, whenever it is configured -- that
-    ordering is required, not chosen on merit. Groq picks up if
-    Featherless fails for ANY reason: rejected key, rate limit,
-    watchdog timeout, or two unparseable answers in a row. Both
-    providers get identical treatment, including the one correction
-    retry.
+    Groq first, Featherless second as of 2026-09-04 -- see the ordering
+    note above the constants for the measurements behind the swap.
+    Whichever is second picks up if the first fails for ANY reason:
+    rejected key, rate limit, watchdog timeout, or two unparseable
+    answers in a row. Both providers get identical treatment, including
+    the one correction retry.
 
     The provider name is returned alongside the payload rather than
     inserted into it. The payload is the model's own JSON, and writing
@@ -613,27 +619,23 @@ def generate_structured_response(prompt):
 
     attempts = []
 
-    if FEATHERLESS_API_KEY:
-        attempts.append((
-            "featherless", FEATHERLESS_BASE_URL, FEATHERLESS_API_KEY,
-            FEATHERLESS_MODEL, FEATHERLESS_DEADLINE,
-        ))
-
-    else:
-        # Not fatal any more, but not quiet either. Featherless being
-        # unconfigured means every response silently comes from the
-        # fallback, which is a deployment that looks healthy while
-        # never using the provider it is supposed to use.
-        print(
-            "[Featherless] FEATHERLESS_API_KEY is not set -- skipping the "
-            "primary provider entirely and going straight to Groq",
-            flush=True,
-        )
-
     if GROQ_API_KEY:
         attempts.append((
             "groq", GROQ_BASE_URL, GROQ_API_KEY,
             GROQ_MODEL, GROQ_DEADLINE,
+        ))
+
+    else:
+        print(
+            "[groq] GROQ_API_KEY is not set -- skipping the primary "
+            "provider entirely and going straight to Featherless",
+            flush=True,
+        )
+
+    if FEATHERLESS_API_KEY:
+        attempts.append((
+            "featherless", FEATHERLESS_BASE_URL, FEATHERLESS_API_KEY,
+            FEATHERLESS_MODEL, FEATHERLESS_DEADLINE,
         ))
 
     if not attempts:

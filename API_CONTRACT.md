@@ -85,24 +85,25 @@ has actually asked for an assessment.
 
 **`generation` answers two different questions, and the second is the
 one that matters.** `featherless_configured` only says a key is
-present. `last_provider` says who actually answered. Featherless is
-attempted first on every `/incident` request, so:
+present. `last_provider` says who actually answered. Since 2026-09-04
+Groq is attempted first, so:
 
 ```json
 {
   "status": "ok",
   "tiers": { "script": true, "semantic": true },
   "retrieval": true,
-  "generation": { "featherless_configured": true, "last_provider": "groq" },
+  "generation": { "featherless_configured": true, "last_provider": "featherless" },
   "languages": ["bn", "en", "hi", "te", "ur"]
 }
 ```
 
-means the key is there, was tried, and **was rejected** — the service
-is working perfectly and has quietly stopped using its primary provider.
-That state is invisible in an individual successful response unless you
-read `generation_provider`, and invisible in `/health` unless you read
-this field, which is why both exist.
+means Groq was tried and **failed**, and the fallback carried the
+request. The steady state is `last_provider: "groq"`; a run of
+`"featherless"` means the primary is in trouble. Either state is
+invisible in an individual response unless you read
+`generation_provider`, and invisible at a glance unless you read this
+field, which is why both exist.
 
 ---
 
@@ -267,10 +268,14 @@ worth surfacing rather than silently reinterpreting.
 }
 ```
 
-That `generation_provider: "groq"` and the 76-second latency are both
-real and belong together: Featherless was attempted first, hit its 60 s
-budget without responding, and Groq answered in the remaining ~16 s.
-See `generation_provider` below.
+That example was captured on 2026-09-04 under the **previous** provider
+order, when Featherless was attempted first: it hit its 60 s budget
+without responding and Groq answered in the remaining ~16 s, hence
+`generation_provider: "groq"` and the 76-second latency together. Under
+the current order Groq is tried first, so a comparable request now
+returns `"groq"` in **8–25 seconds**. The body shape is unchanged; only
+the timing and the reason for the provider name differ. See
+`generation_provider` below.
 
 | Field | Meaning |
 |---|---|
@@ -286,21 +291,28 @@ See `generation_provider` below.
 | `generation_provider` | Which model answered: `"featherless"` or `"groq"`. See below |
 | `latency_ms` | Server-side work only. Dominated by the model call |
 
-### `generation_provider`: Featherless first, Groq behind it
+### `generation_provider`: Groq first, Featherless behind it
 
-Structured generation tries **Featherless (`Qwen/Qwen2.5-72B-Instruct`)
-first on every request**, and falls back to **Groq
-(`openai/gpt-oss-120b`)** if that attempt fails for any reason — a
+Structured generation tries **Groq (`openai/gpt-oss-120b`) first on
+every request**, and falls back to **Featherless
+(`Qwen/Qwen2.5-72B-Instruct`)** if that attempt fails for any reason — a
 rejected key, a rate limit, a watchdog timeout, or two unparseable
 answers in a row. Both providers get identical treatment, including one
 correction retry on malformed JSON.
 
-`generation_provider: "groq"` therefore does not mean "Groq was
-chosen". It means **Featherless was tried and failed**. A deployment
-that returns it on every request is one whose primary provider is
-never actually being used, and the response is otherwise
-indistinguishable from a healthy one. Captured on a deployment with a
-deliberately invalid Featherless key:
+**This order was reversed on 2026-09-04.** Featherless was primary
+because using it is a project requirement, but measured under
+conditions that excluded every cause on the caller's side — five
+identical requests, five minutes fully idle between each, strictly
+sequential, zero rate limiting — it answered **1 of 5**, and all four
+failures were flat 60-second timeouts. Every request was paying a
+60-second penalty before the fallback began. Featherless remains in the
+chain and still answers, quickly when it does (7.7 s, 9.8 s, 10.2 s
+measured); it is now the second attempt rather than a tax on the first.
+
+So `generation_provider: "featherless"` now means **Groq was tried and
+failed** — the inverse of what it meant before. Captured on a
+deployment with a deliberately invalid Groq key:
 
 ```json
 {
@@ -664,19 +676,18 @@ seconds**, plus a one-time ~22 s embedding-model load on the first
 request of a process. A 30-second client default will time out on
 ordinary successful requests.
 
-Model calls are bounded at **90 seconds total** by a watchdog, split
-across the two providers: **60 s for Featherless, 30 s for Groq**. Each
-provider's budget covers its first attempt *and* its correction retry
-together, so a slow first attempt shortens that provider's retry rather
-than doubling the ceiling — and a Featherless attempt that burns its
-full 60 s cannot eat the time Groq needs to rescue the request. Adding
-the fallback did not raise the ceiling; it re-divided the 90 s that was
-already there. If the whole budget runs out you get a **503**, not a
-hang.
+Model calls are bounded at **60 seconds total** by a watchdog, split
+evenly: **30 s for Groq, 30 s for Featherless**. Each provider's budget
+covers its first attempt *and* its correction retry together, so a slow
+first attempt shortens that provider's retry rather than doubling the
+ceiling — and a stalled primary cannot eat the time the fallback needs
+to rescue the request. If the whole budget runs out you get a **503**,
+not a hang.
 
-Measured 2026-09-04 against a provider that accepted the connection and
-never replied: the watchdog fired at **60.0 s**, Groq answered in
-**0.9 s**, total **60.9 s**.
+The fallback budget is 30 s rather than 60 s on evidence: every
+Featherless success measured landed under 15 s, while every failure was
+a flat 60 s timeout that never converted into an answer. 30 s keeps
+each observed success and halves each observed failure.
 
 That watchdog exists because the underlying timeout does not do what it
 looks like it does: the provider call is configured with a 60-second
@@ -710,12 +721,12 @@ can issue assessments faster than that, it needs to queue them or back
 off on 503 — this is a quota, so an immediate retry makes it worse.
 
 **`/incident` has a two-provider fallback; `/translate` has three.**
-Structured generation tries Featherless then Groq. Translation walks
+Structured generation tries Groq then Featherless. Translation walks
 Groq → Gemini → OpenRouter and is unchanged. The two paths are
 deliberately independent: `/translate`'s behaviour is documented against
 the three-tier chain and nothing in the structured path alters it. A
-Featherless outage no longer takes `/incident` down — it shows up as
-`generation_provider: "groq"`, which you should be watching for anyway.
+Groq outage no longer takes `/incident` down — it shows up as
+`generation_provider: "featherless"`, which you should be watching for.
 
 **Read `grounded` on every response, not `/health` once at startup.**
 `/health` does report the index state as `retrieval`, and it is worth
