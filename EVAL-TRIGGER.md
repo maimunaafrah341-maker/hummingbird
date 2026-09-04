@@ -18,16 +18,17 @@ anything about the other's code.
 
 | Suite | Result | Wall time | Command |
 |---|---|---|---|
-| trigger gate | 20/20 passed | 0.22 s | `python yolo_trigger.py selftest` |
-| confidence router | 14/14 passed | 0.11 s | `python confidence_router.py --selftest` |
-| dossier | 15/15 passed | 0.78 s | `python dossier.py --selftest` |
-| webhook dispatch | 17/17 passed | 5.32 s | `python webhook_dispatch.py --selftest` |
-| tts alert | 8/8 passed | 1.10 s | `python tts_alert.py --selftest` |
-| alert language | 7/7 passed | 2.26 s | `python alert_language.py --selftest` |
-| incident service | 12/12 passed | 0.98 s | `python incident_api.py --selftest` |
-| incident rehearsal | 11/11 passed | 1.52 s | `python smoke_test.py incident --no-audio --no-open` |
+| trigger gate | 20/20 passed | 0.24 s | `python yolo_trigger.py selftest` |
+| confidence router | 14/14 passed | 0.13 s | `python confidence_router.py --selftest` |
+| dossier | 15/15 passed | 0.87 s | `python dossier.py --selftest` |
+| webhook dispatch | 17/17 passed | 5.35 s | `python webhook_dispatch.py --selftest` |
+| tts alert | 8/8 passed | 1.12 s | `python tts_alert.py --selftest` |
+| alert language | 7/7 passed | 2.77 s | `python alert_language.py --selftest` |
+| incident service | 12/12 passed | 1.12 s | `python incident_api.py --selftest` |
+| escalation watcher | 19/19 passed | 0.78 s | `python escalation_watcher.py --selftest` |
+| incident rehearsal | 11/11 passed | 1.56 s | `python smoke_test.py incident --no-audio --no-open` |
 
-**104 of 104 checks pass.** Each suite runs as its own process, so none
+**123 of 123 checks pass.** Each suite runs as its own process, so none
 of them can pass on state another one left behind.
 
 ## What the gate suppresses
@@ -42,19 +43,20 @@ continuous violation fed through the real `TriggerGate`:
 | Suppression | 99.9% |
 
 That is one minute of one person without a hardhat. The gate costs
-**2.4 µs per frame**, so the thing that prevents the flood is far
+**4.0 µs per frame**, so the thing that prevents the flood is far
 cheaper than a single inference.
 
 ## Import cost
 
 | Module | Import |
 |---|---|
-| `yolo_trigger` | 0.096 s |
-| `dossier` | 0.308 s |
-| `webhook_dispatch` | 0.106 s |
-| `tts_alert` | 0.032 s |
-| `alert_language` | 0.092 s |
+| `yolo_trigger` | 0.090 s |
+| `dossier` | 0.323 s |
+| `webhook_dispatch` | 0.120 s |
+| `tts_alert` | 0.030 s |
+| `alert_language` | 0.100 s |
 | `confidence_router` | 0.008 s |
+| `escalation_watcher` | 0.023 s |
 
 `yolo_trigger` does not import ultralytics at module scope — the
 kiosk path, and the whole incident rehearsal, never load torch. That
@@ -76,14 +78,14 @@ unaffected — it exists for exactly this case.
 
 | Stage | Measured |
 |---|---|
-| PDF dossier | 14 ms (3.2 KB) |
-| Webhook round trip (local stub) | 1.3 ms |
-| TTS cache hit | 0.76 ms |
+| PDF dossier | 24 ms (3.2 KB) |
+| Webhook round trip (local stub) | 6.3 ms |
+| TTS cache hit | 0.91 ms |
 | TTS mp3 size | 52.1 KB |
-| TTS cold synthesis (network) | **0.77 s** |
+| TTS cold synthesis (network) | **1.19 s** |
 | SMS body | 158 / 160 characters |
 
-Cold synthesis is **1012×** slower than a cache hit and needs the
+Cold synthesis is **1314×** slower than a cache hit and needs the
 network at the moment the alert fires. Prefetch before a demo:
 
 ```
