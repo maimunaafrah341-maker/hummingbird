@@ -395,6 +395,12 @@ app = (FastAPI(title="HazardWatch incident service (reference implementation)")
 # is right for a hackathon demo where the frontend URL is not known
 # until it deploys, and wrong for anything real -- so set it once the
 # frontend has a stable URL.
+# What the twin counts down on a tile. Display only -- the authoritative
+# window is escalation_watcher's, in the trigger process. They share a
+# default and the same env var so the tile is not showing one number
+# while the timer runs another.
+TWIN_ACK_WINDOW = float(os.getenv("HAZARDWATCH_ACK_WINDOW", "45"))
+
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "*").split(",")
@@ -413,6 +419,19 @@ if WEB_AVAILABLE:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type", "X-API-Key"],
     )
+
+    # Bay Twin. Optional on purpose: if bay_twin.py is missing or its
+    # import fails, the incident service still answers exactly as before
+    # and simply is not being watched. A dashboard is never allowed to
+    # be a reason /incident stops working.
+    try:
+        import bay_twin
+        app.include_router(bay_twin.build_router())
+    except Exception as e:
+        bay_twin = None
+        print("[twin] not mounted (%s: %s)" % (type(e).__name__, e))
+else:
+    bay_twin = None
 
 
 def _check_key(provided):
@@ -460,6 +479,26 @@ def incident(request, x_api_key=None):
 
     response["latency_ms"] = round(
         (datetime.now(timezone.utc) - started).total_seconds() * 1000, 2)
+
+    # Tell the twin. Wrapped because telemetry must never be able to
+    # turn a successful assessment into a 500 -- the caller is a trigger
+    # waiting to speak an alert.
+    if bay_twin is not None:
+        try:
+            bay_twin.emit_incident(
+                {
+                    "bay_id": bay,
+                    "incident_type": incident_type,
+                    "source": getattr(request, "source", None) or "api",
+                    "confidence": getattr(request, "confidence", None),
+                    "substance_name": request.substance_name,
+                    "substance_code": request.substance_code,
+                },
+                response,
+                ack_window=TWIN_ACK_WINDOW,
+            )
+        except Exception:
+            pass
 
     return response
 

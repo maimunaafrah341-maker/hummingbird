@@ -120,9 +120,17 @@ class EscalationWatcher(object):
     """
 
     def __init__(self, window=ACK_WINDOW, on_escalate=None, speak=True,
-                 webhook_url=None, timer_factory=None):
+                 webhook_url=None, timer_factory=None, on_acknowledge=None,
+                 twin=None):
         self.window = window
         self.on_escalate = on_escalate
+        # Symmetrical to on_escalate. Without it the only observable
+        # outcome is the bad one -- a stand-down leaves no trace anything
+        # was ever watched, which is the wrong half of the story to hide.
+        self.on_acknowledge = on_acknowledge
+        # Optional bay_twin.Emitter. Both branches of the window are
+        # reported so the tile can go green as well as black.
+        self.twin = twin
         self.speak = speak
         self.webhook_url = webhook_url
         # Injected so tests can fire the timeout without sleeping.
@@ -186,7 +194,36 @@ class EscalationWatcher(object):
 
         log("%s acknowledged by %s after %.1fs -- no escalation"
             % (incident_id, by, watch.elapsed()))
+
+        self._notify("ack", watch, by=by)
         return watch
+
+    def _notify(self, kind, watch, by=None):
+        """
+        Tell the twin and the caller's hook. Never raises: this runs on
+        a timer thread, where an exception would vanish, and it must not
+        be able to leave the watch in a half-finished state.
+        """
+
+        if self.twin is not None:
+            try:
+                zone = (watch.event or {}).get("bay_id")
+
+                if kind == "ack":
+                    self.twin.ack(watch.incident_id, by=by or "kiosk",
+                                  zone=zone, elapsed=watch.elapsed())
+                else:
+                    self.twin.escalation(watch.incident_id, zone=zone,
+                                         elapsed=watch.elapsed(),
+                                         route=getattr(watch, "route", None))
+            except Exception:
+                pass
+
+        if kind == "ack" and self.on_acknowledge:
+            try:
+                self.on_acknowledge(watch)
+            except Exception:
+                pass
 
     def cancel_all(self):
         """Stop every pending timer. For shutdown."""
@@ -251,6 +288,8 @@ class EscalationWatcher(object):
             # silently. Say so and keep the recorded state honest.
             watch.result = {"error": "%s: %s" % (type(e).__name__, e)}
             log("escalation for %s FAILED: %s" % (incident_id, watch.result["error"]))
+
+        self._notify("escalation", watch)
 
         if self.on_escalate:
             try:
@@ -570,6 +609,54 @@ def selftest():
 
     check("acknowledging an unknown id is safe",
           watcher.acknowledge("HW-NOPE") is None, "returns None, does not raise")
+
+    # -- both branches are observable --------------------------------
+    #
+    # A stand-down used to leave no trace outside the log, so anything
+    # watching the system could only ever see the bad outcome.
+
+    class _Recorder(object):
+        """Stands in for a bay_twin.Emitter."""
+
+        def __init__(self, explode=False):
+            self.calls = []
+            self.explode = explode
+
+        def ack(self, incident_id, **kw):
+            if self.explode:
+                raise RuntimeError("twin is down")
+            self.calls.append(("ack", incident_id, kw))
+
+        def escalation(self, incident_id, **kw):
+            if self.explode:
+                raise RuntimeError("twin is down")
+            self.calls.append(("escalation", incident_id, kw))
+
+    hooked = []
+    twin = _Recorder()
+    observed = EscalationWatcher(window=5, speak=False, twin=twin,
+                                 on_acknowledge=hooked.append,
+                                 timer_factory=_InstantTimer)
+    observed.watch("HW-OBS", dict(event, bay_id="BAY-9"), high)
+    observed.acknowledge("HW-OBS", by="supervisor")
+
+    check("acknowledging notifies the twin",
+          len(twin.calls) == 1 and twin.calls[0][0] == "ack"
+          and twin.calls[0][2].get("zone") == "BAY-9",
+          "ack for BAY-9, elapsed included")
+
+    check("acknowledging fires on_acknowledge",
+          len(hooked) == 1 and hooked[0].incident_id == "HW-OBS",
+          "symmetrical to on_escalate")
+
+    broken = EscalationWatcher(window=5, speak=False, twin=_Recorder(explode=True),
+                               timer_factory=_InstantTimer)
+    broken.watch("HW-BROKE", event, high)
+    still_acked = broken.acknowledge("HW-BROKE")
+
+    check("a twin that raises cannot break a stand-down",
+          still_acked is not None and still_acked.state == "acknowledged",
+          "telemetry failure is swallowed")
 
     # -- the case the module exists for ------------------------------
     _InstantTimer.pending = []

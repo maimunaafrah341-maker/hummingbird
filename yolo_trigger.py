@@ -1241,6 +1241,10 @@ def main(argv=None):
         p.add_argument("--key", default=None, help="X-API-Key, if the service requires one")
         p.add_argument("--no-downstream", action="store_true",
                        help="open the incident but skip TTS/PDF/webhook")
+        p.add_argument("--twin", default=None, metavar="URL",
+                       help="stream routing decisions to a Bay Twin, e.g. "
+                            "http://127.0.0.1:8001 -- telemetry only, and "
+                            "silently ignored if nothing is listening")
 
     camera = sub.add_parser("camera", help="watch a webcam (the autonomous path)")
     common(camera)
@@ -1303,11 +1307,26 @@ def main(argv=None):
 
         return 0 if result["ok"] else 1
 
+    # Bay Twin telemetry. The emitter is fire-and-forget on its own
+    # thread and swallows every error, so a twin that is not running
+    # costs the camera loop nothing and produces no log noise. The
+    # incidents themselves are published by the incident service, which
+    # already sees every one it answers -- what only exists in *this*
+    # process is the routing decision, including the borderline ones
+    # that are held and then suppressed without ever firing.
+    twin = None
+
+    if getattr(args, "twin", None):
+        import bay_twin
+        twin = bay_twin.Emitter(args.twin)
+        log("twin: streaming decisions to %s" % twin.url)
+
     router = None
 
     if not args.no_router:
         import confidence_router
-        router = confidence_router.ConfidenceRouter()
+        router = confidence_router.ConfidenceRouter(
+            on_decision=twin.decision if twin else None)
 
     run_camera(
         args.zone, source_index=args.source, base=args.api, key=args.key,
@@ -1316,6 +1335,11 @@ def main(argv=None):
         downstream=not args.no_downstream, max_frames=args.max_frames,
         max_width=args.max_width, router=router,
     )
+
+    if twin is not None:
+        # Let queued telemetry drain before the process exits, or the
+        # last few decisions of a run never reach the page.
+        twin.close()
 
     if router is not None and args.audit:
         print("\nrouter decision trail:")
