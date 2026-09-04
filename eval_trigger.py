@@ -300,6 +300,98 @@ print(json.dumps({
         return None
 
 
+def measure_camera(index=0, frames=25):
+    """
+    The live lens-to-incident path, measured rather than assumed.
+
+    Separate from measure_model() because it answers a different
+    question: not "how fast is the model" but "how fast is a frame that
+    started as light hitting a sensor". Capture cost is real and the
+    file-source numbers do not contain it.
+
+    Returns None if there is no usable camera, which is a legitimate
+    outcome and is reported as such rather than guessed at.
+    """
+
+    code = r"""
+import json, time
+import cv2, numpy
+import yolo_trigger as yt
+
+capture = cv2.VideoCapture(%d)
+
+if not capture.isOpened():
+    print(json.dumps({"available": False, "reason": "camera would not open"}))
+    raise SystemExit
+
+for _ in range(10):          # let exposure settle
+    capture.read()
+
+read_ok, frame = capture.read()
+
+if not read_ok or frame is None:
+    capture.release()
+    print(json.dumps({"available": False, "reason": "opened but returned no frame"}))
+    raise SystemExit
+
+height, width = frame.shape[:2]
+spread = float(numpy.std(frame))
+
+FRAMES = %d
+
+# Capture alone.
+t = time.perf_counter()
+for _ in range(FRAMES):
+    capture.read()
+capture_seconds = (time.perf_counter() - t) / FRAMES
+
+model, label = yt.load_model()
+violations = yt._violation_classes(model)
+gate = yt.TriggerGate(cooldown=45, frames=5)
+
+model(frame, verbose=False, conf=yt.CONFIDENCE_FLOOR)     # warm-up
+
+# The whole live path: capture, infer, unpack, gate.
+seen_any = {}
+t = time.perf_counter()
+for _ in range(FRAMES):
+    ok, live = capture.read()
+    if not ok:
+        continue
+    r = model(live, verbose=False, conf=yt.CONFIDENCE_FLOOR)[0]
+    seen = {}
+    for box in r.boxes:
+        class_id = int(box.cls[0])
+        name = model.names[class_id]
+        seen_any[name] = max(seen_any.get(name, 0.0), round(float(box.conf[0]), 3))
+        if class_id in violations:
+            seen[violations[class_id]] = max(seen.get(violations[class_id], 0.0),
+                                             float(box.conf[0]))
+    gate.observe("BAY-EVAL", seen.keys())
+loop_seconds = (time.perf_counter() - t) / FRAMES
+
+capture.release()
+
+print(json.dumps({
+    "available": True,
+    "width": width, "height": height,
+    "frame_std": spread,
+    "lens_open": spread >= 10.0,
+    "capture_seconds": capture_seconds,
+    "capture_fps": 1.0 / capture_seconds,
+    "loop_seconds": loop_seconds,
+    "loop_fps": 1.0 / loop_seconds,
+    "detections": seen_any,
+    "frames": FRAMES,
+}))
+""" % (index, frames)
+
+    try:
+        return _snippet(code, timeout=900)
+    except subprocess.TimeoutExpired:
+        return None
+
+
 def measure_outputs(allow_network=True):
     """Latency of the three output stages."""
 
@@ -394,7 +486,7 @@ def _row(label, value):
     return "| %s | %s |" % (label, value)
 
 
-def write_report(rows, imports, gate, model, outputs, path=REPORT):
+def write_report(rows, imports, gate, model, camera, outputs, path=REPORT):
     """Write EVAL-TRIGGER.md. Same form and same rules as EVAL.md."""
 
     stamp = datetime.now().strftime("%Y-%m-%d")
@@ -550,14 +642,63 @@ def write_report(rows, imports, gate, model, outputs, path=REPORT):
         add("inference rather than by the gate.")
         add("")
         add("Both figures come from a decoded frame held in memory, so neither")
-        add("includes camera capture. A live webcam adds its own read cost: an")
-        add("earlier run of this loop against the built-in camera measured")
-        add("**4.9 fps** end to end, roughly %.0f× slower than the file source"
-            % (slower / 4.9))
-        add("measured here — though that run read from a closed shutter, so it")
-        add("is a capture-overhead figure, not a detection one. Budget for the")
-        add("slower number until it is measured on the demo machine with the")
-        add("lens open.")
+        add("includes camera capture. That is measured separately below.")
+
+    add("")
+
+    # -- live camera -------------------------------------------------
+    add("## The live camera path")
+    add("")
+
+    if not camera:
+        add("**Not measured.** No usable camera on this machine, so the")
+        add("lens-to-incident path is unverified here. The kiosk trigger is")
+        add("unaffected — it exists for exactly this case.")
+    elif not camera.get("available"):
+        add("**Not measured** — %s. The lens-to-incident path is unverified"
+            % camera.get("reason", "no camera"))
+        add("here; use the kiosk trigger, which exists for exactly this case.")
+    else:
+        add("Light hitting the sensor through to a gate decision, on the")
+        add("built-in camera:")
+        add("")
+        add("| What | Measured |")
+        add("|---|---|")
+        add(_row("Resolution", "%d×%d" % (camera["width"], camera["height"])))
+        add(_row("Capture alone", "%.0f ms  (%.1f fps)"
+                 % (camera["capture_seconds"] * 1000, camera["capture_fps"])))
+        add(_row("Full live path — capture, infer, gate",
+                 "**%.0f ms  (%.1f fps)**"
+                 % (camera["loop_seconds"] * 1000, camera["loop_fps"])))
+        add(_row("Time to fire (%d frames)" % 5,
+                 "**%.1f s**" % (5.0 / camera["loop_fps"])))
+        add("")
+
+        if camera["detections"]:
+            add("What the camera actually saw during the run:")
+            add("")
+            add("| Class | Confidence |")
+            add("|---|---|")
+
+            for name, confidence in sorted(camera["detections"].items(),
+                                           key=lambda kv: -kv[1]):
+                add(_row("`%s`" % name, "%.3f" % confidence))
+
+            add("")
+            add("So the lens-to-model path is verified end to end on this")
+            add("machine, not inferred from the file-source numbers.")
+        else:
+            add("The camera detected nothing above the confidence floor during")
+            add("the run — an empty room, most likely. The path is measured;")
+            add("whether it *fires* was not exercised.")
+
+        if not camera["lens_open"]:
+            add("")
+            add("**Frame variance was %.1f, which means the lens was covered.**"
+                % camera["frame_std"])
+            add("These timings are real but nothing could have been detected.")
+            add("Open the privacy shutter and re-run before trusting the")
+            add("detection row above.")
 
     add("")
 
@@ -622,9 +763,12 @@ def write_report(rows, imports, gate, model, outputs, path=REPORT):
     add("- **The real `/incident` service.** Every run here uses a local mock")
     add("  answering the assumed contract shape. Nothing is known about the")
     add("  teammate's endpoint until this is pointed at it.")
-    add("- **A real camera.** Frames come from a file. On the machine this was")
-    add("  measured on the webcam returns flat frames — a closed privacy")
-    add("  shutter — so the lens-to-model path is unverified here.")
+    if not (camera and camera.get("available")):
+        add("- **A real camera.** Frames come from a file; no usable camera was")
+        add("  available, so the lens-to-model path is unverified here.")
+    elif not camera.get("detections"):
+        add("- **A camera that sees a violation.** The live path is timed, but")
+        add("  nothing was detected during the run, so firing is unexercised.")
     add("- **Real SMS, Telegram or Slack delivery.** The dispatch payload is")
     add("  built and sent for real; the recipient is a stub. No message was")
     add("  ever sent to a carrier or a workspace.")
@@ -657,6 +801,8 @@ def main(argv=None):
                         help="let the incident rehearsal speak aloud")
     parser.add_argument("--gate-only", action="store_true",
                         help="run the suites and stop")
+    parser.add_argument("--no-camera", action="store_true",
+                        help="skip the live camera measurement")
 
     args = parser.parse_args(argv)
 
@@ -688,6 +834,20 @@ def main(argv=None):
         model = measure_model()
         print(" %s" % ("%.1f fps" % model["fps"] if model else "NOT MEASURED"))
 
+    camera = None
+
+    if args.quick or args.no_camera:
+        print("  live camera... skipped")
+    else:
+        print("  live camera...", end="", flush=True)
+        camera = measure_camera()
+
+        if camera and camera.get("available"):
+            print(" %.1f fps end to end" % camera["loop_fps"])
+        else:
+            print(" not available (%s)"
+                  % (camera.get("reason", "unknown") if camera else "no result"))
+
     print("  output stages...", end="", flush=True)
     outputs = measure_outputs(allow_network=not args.no_network)
     print(" done")
@@ -695,7 +855,7 @@ def main(argv=None):
     if args.no_write:
         print("\n(--no-write: EVAL-TRIGGER.md not touched)")
     else:
-        path = write_report(rows, imports, gate, model, outputs)
+        path = write_report(rows, imports, gate, model, camera, outputs)
         print("\nwrote %s" % path)
 
     print("\n%s" % ("gate passed -- safe to push" if ok
