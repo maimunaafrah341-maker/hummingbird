@@ -120,8 +120,8 @@ def _offline_voice_for(language):
 def speak_offline(text, language="en"):
     """Speak via the OS engine. Returns True if it spoke."""
 
-    global _engine
-
+    # No `global _engine` here: _offline_voice_for() is what creates it,
+    # and this function only ever reads it.
     voice = _offline_voice_for(language)
 
     if voice is None:
