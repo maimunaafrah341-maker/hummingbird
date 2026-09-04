@@ -437,8 +437,21 @@ def build_dossier(event, response, out_dir=None, filename=None, open_after=False
 
     # -- spoken alert, transcribed -----------------------------------
     if response.get("spoken_alert"):
+        broadcast = response.get("spoken_alert_broadcast") or response["spoken_alert"]
+        spoken_language = response.get("spoken_language") or "en"
+
         story.append(Paragraph("Spoken alert (as broadcast)", heading_style))
-        story.append(Paragraph("&ldquo;%s&rdquo;" % response["spoken_alert"], body_style))
+        story.append(Paragraph("&ldquo;%s&rdquo;" % broadcast, body_style))
+        story.append(Paragraph("Broadcast in: %s." % spoken_language, footer_style))
+
+        # If it was translated, the English original belongs on the page
+        # too -- a record of what was announced is only checkable if the
+        # source it came from is there beside it.
+        if broadcast != response["spoken_alert"]:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(
+                "Original (en): &ldquo;%s&rdquo;" % response["spoken_alert"],
+                footer_style))
 
     # -- citation ----------------------------------------------------
     story.append(Paragraph("Regulatory reference", heading_style))
@@ -599,6 +612,36 @@ def selftest():
         check("missing font is declared on the page",
               "no font for" in embedded or "script this machine" in embedded,
               "no Unicode font installed; page must admit it")
+
+    # -- what is actually ON the page --------------------------------
+    # Byte-searching a PDF proves nothing: the streams are compressed,
+    # and with a subset font the text becomes glyph ids rather than
+    # characters. Extract it properly or do not claim it. Skipped
+    # rather than failed when pypdf is absent.
+    try:
+        from pypdf import PdfReader
+
+        localized = dict(SAMPLE_RESPONSE,
+                         spoken_alert_broadcast="Peligro en bahia 3.",
+                         spoken_language="es")
+        localized_path = build_dossier(SAMPLE_EVENT, localized,
+                                       filename="selftest_lang.pdf")
+        page_text = "\n".join(pg.extract_text() for pg in PdfReader(localized_path).pages)
+
+        check("broadcast language is on the page",
+              "Broadcast in" in page_text and "Peligro" in page_text,
+              "%d chars extracted" % len(page_text))
+
+        check("english original is kept beside it",
+              "Original (en)" in page_text
+              and SAMPLE_RESPONSE["spoken_alert"][:18] in page_text,
+              "a translated announcement is only checkable next to its source")
+
+        check("steps and citation reached the page",
+              "Response steps" in page_text and "1910.135" in page_text, "")
+
+    except ImportError:
+        print("  note: pypdf not installed -- page-content checks skipped")
 
     print("\n%d/%d dossier checks passed" % (sum(checks), len(checks)))
     print("  wrote: %s" % path)

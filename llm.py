@@ -226,6 +226,20 @@ def generate_response(prompt):
                 print(f"[OpenRouter] {model} failed: {type(e).__name__}: {e}")
                 continue
 
+    # last_error is still None when NO provider was configured at all --
+    # every tier above was skipped rather than attempted, so nothing ever
+    # assigned to it. `raise None` is a TypeError about exceptions not
+    # deriving from BaseException, which tells the caller nothing about
+    # the actual problem: there are no API keys in .env.
+    #
+    # This is the default state of a fresh clone and of a demo laptop
+    # whose .env was never filled in, so it is the error most likely to
+    # be seen and the one that most needs to say what to do.
+    if last_error is None:
+        last_error = RuntimeError(
+            "no LLM provider is configured -- set GROQ_API_KEY, "
+            "GEMINI_API_KEY or OPENROUTER_API_KEY in .env (see env.example)")
+
     print("\n" + "=" * 70)
     print("RESPONSE GENERATION ERROR (Groq, Gemini, and OpenRouter all failed)")
     print("=" * 70)

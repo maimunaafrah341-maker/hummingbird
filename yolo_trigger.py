@@ -368,9 +368,26 @@ def dispatch_downstream(result, speak=True, dossier=True, webhook=True,
 
     if speak and body.get("spoken_alert"):
         try:
-            import tts_alert
-            done["spoke"] = tts_alert.speak(
+            # Translate first, then speak in whatever language actually
+            # came back. announce() exists so those two steps cannot be
+            # separated -- speaking English text tagged "hi" gives it a
+            # Hindi voice and it is unintelligible in both languages.
+            import alert_language
+
+            spoken = alert_language.announce(
                 body["spoken_alert"], event.get("language", "en"))
+            done["spoke"] = spoken
+
+            if spoken["translated"]:
+                log("  spoken in %s: %s" % (spoken["language"], spoken["text"]))
+            elif event.get("language", "en") != "en":
+                log("  spoken in en -- not translated (%s)" % spoken["reason"])
+
+            # The dossier says "as broadcast", so give it what was
+            # broadcast, plus the original for anyone checking it.
+            body["spoken_alert_broadcast"] = spoken["text"]
+            body["spoken_language"] = spoken["language"]
+
         except Exception as e:
             log("  tts skipped: %s: %s" % (type(e).__name__, e))
 

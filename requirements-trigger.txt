@@ -37,3 +37,7 @@ reportlab>=4.2.0
 # only reportlab + the TTS packages are needed for
 # `python smoke_test.py incident`. The rehearsal never imports
 # ultralytics -- that is why it runs without a camera.
+
+# Optional: only used by dossier.py --selftest to read back what is
+# actually rendered on the page. Absent means those checks skip.
+pypdf>=4.0.0
