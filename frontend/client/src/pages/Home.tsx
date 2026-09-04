@@ -868,7 +868,34 @@ export default function Home() {
     setIsSubmitting(true);
     if (!cameraOn) await toggleCamera();
     if (!micOn) await toggleMic();
-    const payload = { location, substance, incident_type: incidentType, language: languageCodes[language] ?? "en", media: { camera: cameraOn || Boolean(cameraStreamRef.current), microphone: micOn || Boolean(micStreamRef.current) } };
+    // Field names the incident service actually reads. Verified against
+    // the deployed backend on 2026-09-05: posting `location` and
+    // `substance` returned `400 bay_id must not be empty` on every
+    // request, so the console had never once shown a real answer -- it
+    // fell through to the demo fallback each time.
+    //
+    // `language` and `target_lang` are both sent, and both carry the
+    // same code. The two incident services name this field differently
+    // and each ignores unknown keys, so one payload satisfies both and
+    // this line does not need editing again when the backend is
+    // switched over.
+    //
+    // substance_code is null on purpose: the dropdown holds display
+    // names ("Caustic Soda", "Unknown Substance") and there is no
+    // name-to-code map on this side. Null is the documented value for
+    // "not mapped to a known code" -- it is not the same as no
+    // substance, and both backends resolve the name themselves.
+    const languageCode = languageCodes[language] ?? "en";
+
+    const payload = {
+      bay_id: location,
+      substance_name: substance,
+      substance_code: null,
+      incident_type: incidentType,
+      language: languageCode,
+      target_lang: languageCode,
+      media: { camera: cameraOn || Boolean(cameraStreamRef.current), microphone: micOn || Boolean(micStreamRef.current) },
+    };
     let response = defaultResponse;
     let live = false;
 
@@ -890,7 +917,20 @@ export default function Home() {
       if (result.ok) {
         const data = await result.json();
         if (data?.severity && Array.isArray(data?.steps) && data?.spoken_alert) {
-          response = data as IncidentResponse;
+          // Both incident services send severity lower case
+          // ("critical"); every comparison in this file tests for
+          // "CRITICAL". Left as-is, a critical incident rendered with
+          // the non-critical styling and the operator read a lower
+          // case severity where the design shows an upper case one --
+          // the loudest state in the console silently downgraded.
+          //
+          // Normalised once here, on receipt, rather than at each
+          // comparison site, so a new comparison added later cannot
+          // reintroduce the bug.
+          response = {
+            ...data,
+            severity: String(data.severity).toUpperCase(),
+          } as IncidentResponse;
           live = true;
         } else {
           console.error("[incident] backend answered %s but the body did not match the expected shape (severity, steps[], spoken_alert):", result.status, data);
