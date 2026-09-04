@@ -1,0 +1,533 @@
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  Beaker,
+  Building2,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Cloud,
+  Clock3,
+  Droplets,
+  Factory,
+  Flame,
+  HardHat,
+  Languages,
+  LockKeyhole,
+  Mic,
+  MicOff,
+  MapPin,
+  Radio,
+  RotateCcw,
+  ShieldAlert,
+  Siren,
+  Thermometer,
+  Video,
+  VideoOff,
+  Volume2,
+  Waves,
+  Wind,
+} from "lucide-react";
+
+type IncidentType = "Spill" | "Vapor Release" | "Skin Contact" | "Fire Flare" | "Gas Leak" | "Thermal Runaway" | "Unknown Chemical" | "Structural Failure";
+type Severity = "HIGH" | "CRITICAL" | "MEDIUM";
+
+type IncidentResponse = {
+  severity: Severity;
+  steps: string[];
+  spoken_alert: string;
+};
+
+const locations = ["Bay-1", "Bay-2", "Bay-3, Reactor B", "Centrifuge C-201", "Distillation Column DC-4", "Mixing Vessel MV-12", "Compressor K-07", "Pump P-204", "Scrubber S-03", "Storage Tank TK-18", "Loading Dock 2", "Utilities · Boiler House"];
+const substances = ["Hydrochloric Acid", "Acetone", "Caustic Soda", "Sulfuric Acid", "Chlorine", "Ammonia Solution", "Methanol", "Hydrogen Peroxide", "Sodium Hypochlorite", "Ethylene Oxide", "Unknown Substance"];
+const languages = ["Telugu", "Hindi", "Bengali", "English"];
+const incidentTypes: { label: IncidentType; icon: typeof Waves; note: string }[] = [
+  { label: "Spill", icon: Waves, note: "Liquid release" },
+  { label: "Vapor Release", icon: Wind, note: "Airborne exposure" },
+  { label: "Skin Contact", icon: ShieldAlert, note: "Personnel exposure" },
+  { label: "Fire Flare", icon: Flame, note: "Ignition / thermal event" },
+  { label: "Gas Leak", icon: Cloud, note: "Toxic or flammable gas" },
+  { label: "Thermal Runaway", icon: Thermometer, note: "Heat / pressure rise" },
+  { label: "Unknown Chemical", icon: CircleHelp, note: "Unidentified material" },
+  { label: "Structural Failure", icon: Droplets, note: "Equipment or building" },
+];
+
+const defaultResponse: IncidentResponse = {
+  severity: "HIGH",
+  steps: ["Evacuate", "Do not use water", "Move crosswind"],
+  spoken_alert: "Evacuate now",
+};
+const evacuationBroadcasts: Record<string, { lang: string; lead: string; instructions: string[] }> = {
+  English: { lang: "en-IN", lead: "EVACUATE NOW! IT'S NOT A DRILL!!", instructions: ["DO NOT USE WATER.", "MOVE CROSSWIND.", "REPORT TO THE ASSEMBLY POINT.", "DO NOT RE-ENTER.", "WAIT FOR THE ALL CLEAR."] },
+  Hindi: { lang: "hi-IN", lead: "अभी खाली करें! यह अभ्यास नहीं है!!", instructions: ["पानी का उपयोग न करें।", "हवा की दिशा के पार जाएँ।", "सभा स्थल पर रिपोर्ट करें।", "दोबारा प्रवेश न करें।", "सभी सुरक्षित होने की घोषणा की प्रतीक्षा करें।"] },
+  Telugu: { lang: "te-IN", lead: "ఇప్పుడే ఖాళీ చేయండి! ఇది మాక్ డ్రిల్ కాదు!!", instructions: ["నీటిని ఉపయోగించవద్దు.", "గాలి దిశకు అడ్డంగా కదలండి.", "సమావేశ స్థలానికి వెళ్లండి.", "తిరిగి ప్రవేశించవద్దు.", "అందరూ సురక్షితమని ప్రకటించే వరకు వేచి ఉండండి."] },
+  Bengali: { lang: "bn-IN", lead: "এখনই সরে যান! এটি কোনো মহড়া নয়!!", instructions: ["জল ব্যবহার করবেন না।", "বাতাসের আড়াআড়ি দিকে যান।", "সমাবেশস্থলে রিপোর্ট করুন।", "পুনরায় প্রবেশ করবেন না।", "নিরাপদ ঘোষণার জন্য অপেক্ষা করুন।"] },
+};
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  icon: typeof Factory;
+}) {
+  return (
+    <label className="field-shell">
+      <span className="field-label">{label}</span>
+      <span className="field-control">
+        <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
+        <select value={value} onChange={(event) => onChange(event.target.value)} aria-label={label}>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="field-chevron" size={16} aria-hidden="true" />
+      </span>
+    </label>
+  );
+}
+
+function MediaDock({ cameraOn, micOn, unknownMaterial, fieldLevel, voiceLevel, mediaError, videoRef, onToggleCamera, onToggleMic }: {
+  cameraOn: boolean;
+  micOn: boolean;
+  unknownMaterial: boolean;
+  fieldLevel: number;
+  voiceLevel: number;
+  mediaError: string | null;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  onToggleCamera: () => void;
+  onToggleMic: () => void;
+}) {
+  return (
+    <section className="media-dock" aria-label="Incident media controls">
+      <div className="media-dock-copy">
+        <div className="media-title-row"><span className="media-live-dot" /><span className="eyebrow">Field media link</span><span className="media-optional">Optional / operator controlled</span></div>
+        <h2>Visual &amp; audio confirmation</h2>
+        <p>{unknownMaterial ? "Unknown material selected. Use the visual and audio link to help responders confirm the release before entry." : "Keep a live view available for the response team. Camera and microphone access can be opened or closed at any time."}</p>
+        {mediaError && <span className="media-error" role="status">{mediaError}</span>}
+        {unknownMaterial && <div className="unknown-actions"><span>Recommended for unknown substance</span><button onClick={onToggleCamera}>{cameraOn ? "Camera active" : "View from camera"}</button><button onClick={onToggleMic}>{micOn ? "Mic active" : "Listen to field"}</button></div>}
+      </div>
+      <div className={`media-preview ${cameraOn ? "media-preview-live" : ""}`}>
+        {cameraOn ? <video ref={videoRef} autoPlay muted playsInline aria-label="Live camera preview" /> : <><VideoOff size={22} /><span>Camera closed</span></>}
+        {cameraOn && <span className="preview-live-label"><span className="media-live-dot" /> LIVE</span>}
+      </div>
+      <div className="media-actions">
+        <button className={`media-control ${cameraOn ? "media-control-active" : ""}`} onClick={onToggleCamera} aria-pressed={cameraOn}>
+          {cameraOn ? <Video size={17} /> : <VideoOff size={17} />}<span>{cameraOn ? "Close camera" : "Open camera"}</span><kbd>{cameraOn ? "ON" : "OFF"}</kbd>
+        </button>
+        <button className={`media-control ${micOn ? "media-control-active" : ""}`} onClick={onToggleMic} aria-pressed={micOn}>
+          {micOn ? <Mic size={17} /> : <MicOff size={17} />}<span>{micOn ? "Close microphone" : "Open microphone"}</span><kbd>{micOn ? "ON" : "OFF"}</kbd>
+        </button>
+        <div className={`audio-status ${micOn ? "audio-status-live" : ""}`}><span className="audio-bars" aria-hidden="true">{[fieldLevel, fieldLevel * .8, fieldLevel * 1.1, fieldLevel * .7, fieldLevel * .9].map((level, index) => <i key={index} style={{ height: `${Math.max(4, Math.min(14, 4 + level * 10))}px` }} />)}</span><span>{micOn ? "Field sound · live" : "Field sound · closed"}</span></div>
+        <div className={`audio-status ${micOn ? "audio-status-live" : ""}`}><span className="audio-bars voice-bars" aria-hidden="true">{[voiceLevel * .8, voiceLevel, voiceLevel * 1.15, voiceLevel * .65, voiceLevel * .9].map((level, index) => <i key={index} style={{ height: `${Math.max(4, Math.min(14, 4 + level * 10))}px` }} />)}</span><span>{micOn ? "Human voice · live" : "Human voice · closed"}</span></div>
+      </div>
+    </section>
+  );
+}
+
+function SystemStatus() {
+  return (
+    <section className="status-card" aria-label="Operational status">
+      <div className="status-card-heading">
+        <div>
+          <p className="eyebrow">System status</p>
+          <h2>Operational</h2>
+        </div>
+        <span className="status-dot" aria-label="All systems operational" />
+      </div>
+      <div className="status-grid">
+        <div className="status-metric">
+          <span className="status-metric-icon"><Activity size={15} /></span>
+          <div><strong>Online</strong><span>Sensor mesh</span></div>
+        </div>
+        <div className="status-metric">
+          <span className="status-metric-icon"><Radio size={15} /></span>
+          <div><strong>Ready</strong><span>Alert relay</span></div>
+        </div>
+        <div className="status-metric">
+          <span className="status-metric-icon"><Clock3 size={15} /></span>
+          <div><strong>&lt; 1 sec</strong><span>Response target</span></div>
+        </div>
+        <div className="status-metric">
+          <span className="status-metric-icon"><CheckCircle2 size={15} /></span>
+          <div><strong>Verified</strong><span>Protocol library</span></div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LockoutView({ response, context, cameraOn, micOn, fieldLevel, voiceLevel, videoRef, onReset }: { response: IncidentResponse; context: { location: string; substance: string; incidentType: IncidentType; language: string }; cameraOn: boolean; micOn: boolean; fieldLevel: number; voiceLevel: number; videoRef: RefObject<HTMLVideoElement | null>; onReset: () => void }) {
+  const isCritical = response.severity === "CRITICAL";
+  const [evacuationConfirmed, setEvacuationConfirmed] = useState(false);
+  const [autoStopped, setAutoStopped] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [messageIndex, setMessageIndex] = useState(0);
+  const speechTimerRef = useRef<number | null>(null);
+  const broadcast = evacuationBroadcasts[context.language] ?? evacuationBroadcasts.English;
+  const sequence = broadcast.instructions.flatMap((instruction) => [broadcast.lead, instruction]);
+  const currentMessage = sequence[messageIndex];
+  const responseSteps = broadcast.instructions;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (elapsedSeconds >= 300 && !evacuationConfirmed) setAutoStopped(true);
+  }, [elapsedSeconds, evacuationConfirmed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window) || evacuationConfirmed || autoStopped) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      return;
+    }
+    const speakAlert = () => {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(currentMessage);
+      utterance.lang = broadcast.lang;
+      utterance.rate = 0.86;
+      utterance.pitch = 0.92;
+      utterance.volume = 1;
+      let advanced = false;
+      const advance = () => {
+        if (advanced || evacuationConfirmed || autoStopped) return;
+        advanced = true;
+        if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
+        setMessageIndex((index) => (index + 1) % sequence.length);
+      };
+      utterance.onend = advance;
+      speechTimerRef.current = window.setTimeout(advance, Math.max(5200, currentMessage.length * 85));
+      window.speechSynthesis.speak(utterance);
+    };
+    speakAlert();
+    return () => {
+      window.speechSynthesis.cancel();
+      if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = null;
+    };
+  }, [broadcast.lang, broadcast.lead, broadcast.instructions, currentMessage, sequence.length, autoStopped, evacuationConfirmed]);
+
+  function confirmEvacuation() {
+    setEvacuationConfirmed(true);
+    setAutoStopped(false);
+    window.speechSynthesis?.cancel();
+    if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
+    speechTimerRef.current = null;
+  }
+
+  const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
+  const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+
+  return (
+    <main className={`lockout-screen ${isCritical ? "lockout-critical" : "lockout-high"}`}>
+      <div className="lockout-noise" />
+      <header className="lockout-header">
+        <div className="brand lockout-brand">
+          <span className="brand-mark"><Siren size={22} strokeWidth={2.4} /></span>
+          <span><strong>HAZARD WATCH</strong><small>Operational safety network</small></span>
+        </div>
+        <div className="lockout-badge"><LockKeyhole size={15} /> Protocol locked</div>
+        <div className="lockout-time"><Clock3 size={15} /> {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+      </header>
+
+      <div className="lockout-center">
+        <div className="severity-kicker"><span className="pulse-dot" /> Active incident / {response.severity}</div>
+        <h1>BREACH PROTOCOL<br /><em>ACTIVE</em></h1>
+        <p className="lockout-context"><span>{context.location}</span><span className="context-divider">/</span><span>{context.substance}</span><span className="context-divider">/</span><span>{context.incidentType}</span></p>
+
+        <div className="pictogram-row" aria-label="Emergency pictograms">
+          <div className="pictogram"><Siren size={42} strokeWidth={1.5} /><span>ALERT</span></div>
+          <div className="pictogram"><HardHat size={42} strokeWidth={1.5} /><span>PROTECT</span></div>
+          <div className="pictogram"><Waves size={42} strokeWidth={1.5} /><span>ISOLATE</span></div>
+        </div>
+
+        <div className="lockout-media-status">
+          <div className="lockout-camera"><video ref={videoRef} autoPlay muted playsInline aria-label="Live incident camera feed" />{!cameraOn && <span>Camera feed unavailable</span>}</div>
+          <div className="lockout-audio"><strong>Field audio link</strong><label>Field sound <span className="live-meter">{[fieldLevel, fieldLevel * .8, fieldLevel * 1.1, fieldLevel * .7, fieldLevel * .9].map((level, index) => <i key={index} style={{ height: `${Math.max(5, 5 + level * 16)}px` }} />)}</span></label><label>Human voice <span className="live-meter voice-meter">{[voiceLevel * .8, voiceLevel, voiceLevel * 1.15, voiceLevel * .65, voiceLevel * .9].map((level, index) => <i key={index} style={{ height: `${Math.max(5, 5 + level * 16)}px` }} />)}</span></label><small>{micOn ? "Input live · operator confirmation required" : "Microphone unavailable"}</small></div>
+        </div>
+        <div className="spoken-alert">
+          <Volume2 size={23} className="spoken-icon" />
+          <span>{currentMessage}</span>
+        </div>
+        <div className={`evacuation-control ${evacuationConfirmed ? "evacuation-confirmed" : autoStopped ? "evacuation-auto-stopped" : ""}`}>
+          <div className="evacuation-control-copy"><strong>{evacuationConfirmed ? "Evacuation confirmed" : autoStopped ? "Audio safeguard stopped" : `Broadcast ${messageIndex + 1} of ${sequence.length}`}</strong><span>{evacuationConfirmed ? "Confirmed by operator after camera/audio review · accountability required" : autoStopped ? "Five-minute limit reached. Confirm status before restarting." : `Repeating in ${context.language} · elapsed ${minutes}:${seconds}`}</span></div>
+          {!evacuationConfirmed && <button className="confirm-evacuation" onClick={confirmEvacuation}>{autoStopped ? "Confirm evacuation" : "Confirm evacuation"}</button>}
+          {evacuationConfirmed && <CheckCircle2 size={22} />}
+        </div>
+
+        <ol className="steps-list">
+          {responseSteps.map((step, index) => (
+            <li key={`${step}-${index}`}>
+              <span className="step-number">0{index + 1}</span>
+              <strong>{step}</strong>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <footer className="lockout-footer">
+        <span><span className={`live-indicator ${evacuationConfirmed || autoStopped ? "live-indicator-muted" : ""}`} /> {evacuationConfirmed ? "Broadcast acknowledged" : autoStopped ? "Broadcast stopped at five minutes" : `Broadcast active · ${context.language} channel`}</span>
+        <button className="reset-button" onClick={onReset}><RotateCcw size={15} /> Reset console</button>
+      </footer>
+    </main>
+  );
+}
+
+export default function Home() {
+  const [location, setLocation] = useState(locations[0]);
+  const [substance, setSubstance] = useState(substances[0]);
+  const [incidentType, setIncidentType] = useState<IncidentType>("Spill");
+  const [language, setLanguage] = useState("English");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lockout, setLockout] = useState<IncidentResponse | null>(null);
+
+  const [cameraOn, setCameraOn] = useState(false);
+  const [micOn, setMicOn] = useState(false);
+  const [fieldLevel, setFieldLevel] = useState(0);
+  const [voiceLevel, setVoiceLevel] = useState(0);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const lockoutVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioFrameRef = useRef<number | null>(null);
+
+  const selectedIncident = useMemo(() => incidentTypes.find((item) => item.label === incidentType) ?? incidentTypes[0], [incidentType]);
+
+  useEffect(() => () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => {
+    if (cameraOn && videoRef.current && cameraStreamRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current;
+    }
+  }, [cameraOn]);
+
+  useEffect(() => {
+    if (lockout && cameraOn && lockoutVideoRef.current && cameraStreamRef.current) {
+      lockoutVideoRef.current.srcObject = cameraStreamRef.current;
+    }
+  }, [cameraOn, lockout]);
+
+  useEffect(() => {
+    if (!micOn || !micStreamRef.current) {
+      if (audioFrameRef.current) cancelAnimationFrame(audioFrameRef.current);
+      audioContextRef.current?.close();
+      audioContextRef.current = null;
+      setFieldLevel(0);
+      setVoiceLevel(0);
+      return;
+    }
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(micStreamRef.current);
+    const fieldAnalyser = context.createAnalyser();
+    const voiceAnalyser = context.createAnalyser();
+    const voiceFilter = context.createBiquadFilter();
+    fieldAnalyser.fftSize = 64;
+    voiceAnalyser.fftSize = 64;
+    voiceFilter.type = "bandpass";
+    voiceFilter.frequency.value = 1450;
+    voiceFilter.Q.value = 0.7;
+    source.connect(fieldAnalyser);
+    source.connect(voiceFilter);
+    voiceFilter.connect(voiceAnalyser);
+    audioContextRef.current = context;
+    const fieldData = new Uint8Array(fieldAnalyser.frequencyBinCount);
+    const voiceData = new Uint8Array(voiceAnalyser.frequencyBinCount);
+    let frameCounter = 0;
+    const readLevels = () => {
+      fieldAnalyser.getByteFrequencyData(fieldData);
+      voiceAnalyser.getByteFrequencyData(voiceData);
+      frameCounter += 1;
+      if (frameCounter % 6 === 0) {
+        setFieldLevel(fieldData.reduce((sum, value) => sum + value, 0) / fieldData.length / 255);
+        setVoiceLevel(voiceData.reduce((sum, value) => sum + value, 0) / voiceData.length / 255);
+      }
+      audioFrameRef.current = requestAnimationFrame(readLevels);
+    };
+    readLevels();
+    return () => {
+      if (audioFrameRef.current) cancelAnimationFrame(audioFrameRef.current);
+      context.close();
+      audioContextRef.current = null;
+    };
+  }, [micOn]);
+
+  async function toggleCamera() {
+    setMediaError(null);
+    if (cameraOn) {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
+      setCameraOn(false);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMediaError("Camera access is unavailable in this browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCameraOn(true);
+    } catch {
+      setMediaError("Camera permission was not granted. The console remains fully operational.");
+    }
+  }
+
+  async function toggleMic() {
+    setMediaError(null);
+    if (micOn) {
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
+      setMicOn(false);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMediaError("Microphone access is unavailable in this browser.");
+      return;
+    }
+    try {
+      micStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      setMicOn(true);
+    } catch {
+      setMediaError("Microphone permission was not granted. The console remains fully operational.");
+    }
+  }
+
+  async function triggerProtocol() {
+    setIsSubmitting(true);
+    if (!cameraOn) await toggleCamera();
+    if (!micOn) await toggleMic();
+    const payload = { location, substance, incident_type: incidentType, language, media: { camera: cameraOn || Boolean(cameraStreamRef.current), microphone: micOn || Boolean(micStreamRef.current) } };
+    let response = defaultResponse;
+
+    try {
+      const result = await fetch("/incident", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (result.ok) {
+        const data = await result.json();
+        if (data?.severity && Array.isArray(data?.steps) && data?.spoken_alert) response = data as IncidentResponse;
+      }
+    } catch {
+      // The teammate endpoint is not connected yet; continue with the demo response.
+    }
+
+    setIsSubmitting(false);
+    setLockout(response);
+  }
+
+  function closeMedia() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    micStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    if (lockoutVideoRef.current) lockoutVideoRef.current.srcObject = null;
+    setCameraOn(false);
+    setMicOn(false);
+  }
+
+  function resetConsole() {
+    window.speechSynthesis?.cancel();
+    closeMedia();
+    setLockout(null);
+  }
+
+  if (lockout) {
+    return <LockoutView response={lockout} context={{ location, substance, incidentType, language }} cameraOn={cameraOn} micOn={micOn} fieldLevel={fieldLevel} voiceLevel={voiceLevel} videoRef={lockoutVideoRef} onReset={resetConsole} />;
+  }
+
+  return (
+    <main className="console-shell">
+      <div className="console-grid" />
+      <div className="console-topline" />
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark"><Siren size={21} strokeWidth={2.4} /></span>
+          <span><strong>HAZARD WATCH</strong><small>Operational safety network</small></span>
+        </div>
+        <div className="topbar-center"><span className="live-indicator" /> Live console <span className="topbar-slash">/</span> Incident gateway <span className="gateway-status">CONNECTED</span></div>
+        <div className="topbar-right"><MapPin size={15} /> <span>Plant 04 · South Zone</span><span className="topbar-divider" /><span className="utc-time">UTC+05:30</span></div>
+      </header>
+
+      <div className="page-frame">
+        <section className="hero-copy">
+          <div className="hero-kicker"><span>01</span> Incident command console</div>
+          <h1>Make the right call<br /><em>before it spreads.</em></h1>
+          <p>Declare a site hazard to activate the appropriate emergency protocol, broadcast the alert, and lock the console for response coordination.</p>
+          <div className="hero-meta"><span><span className="meta-dot" /> Response target: under 1 second</span><span><ShieldAlert size={14} /> No incident declared</span></div>
+        </section>
+
+        <section className="incident-panel" aria-label="Incident declaration form">
+          <div className="panel-header">
+            <div><span className="panel-index">Incident gateway</span><h2>Declare an incident</h2></div>
+            <span className="panel-lock"><LockKeyhole size={14} /> Secured console</span>
+          </div>
+          <div className="form-fields">
+            <SelectField label="Bay / machine ID" value={location} options={locations} onChange={setLocation} icon={Factory} />
+            <SelectField label="Substance involved" value={substance} options={substances} onChange={setSubstance} icon={Beaker} />
+            <SelectField label="Alert language" value={language} options={languages} onChange={setLanguage} icon={Languages} />
+          </div>
+          <div className="field-shell incident-selector">
+            <span className="field-label">Incident type</span>
+            <div className="incident-options" role="radiogroup" aria-label="Incident type">
+              {incidentTypes.map(({ label, icon: Icon, note }) => (
+                <button key={label} className={`incident-option ${incidentType === label ? "selected" : ""}`} onClick={() => setIncidentType(label)} role="radio" aria-checked={incidentType === label}>
+                  <span className="incident-icon"><Icon size={19} strokeWidth={1.8} /></span>
+                  <span><strong>{label}</strong><small>{note}</small></span>
+                  <span className="radio-dot" />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="selection-summary"><span className="selection-icon"><selectedIncident.icon size={16} /></span><span>Ready to declare <strong>{incidentType.toLowerCase()}</strong> at <strong>{location}</strong></span><span className="summary-line" /></div>
+          <button className="trigger-button" onClick={triggerProtocol} disabled={isSubmitting}>
+            <span className="trigger-icon" aria-hidden="true">
+              <svg className="hazard-symbol" viewBox="0 0 32 28" role="img">
+                <path d="M14.06 2.42a2.25 2.25 0 0 1 3.88 0l12.1 20.93A2.25 2.25 0 0 1 28.1 26.7H3.9a2.25 2.25 0 0 1-1.94-3.35l12.1-20.93Z" fill="currentColor" />
+                <path d="M16 8.2v8.7" stroke="#f05a47" strokeWidth="3.2" strokeLinecap="round" />
+                <circle cx="16" cy="21.2" r="1.8" fill="#f05a47" />
+              </svg>
+            </span>
+            <span>{isSubmitting ? "Contacting incident gateway…" : "Trigger breach protocol"}</span>
+            <span className="trigger-arrow">↗</span>
+          </button>
+          <p className="panel-footnote">Use only for confirmed or imminent hazards. This action broadcasts to the response network.</p>
+        </section>
+
+        <aside className="side-rail">
+          <SystemStatus />
+          <section className="briefing-card">
+            <div className="briefing-heading"><span className="eyebrow">Response brief</span><Building2 size={17} /></div>
+            <div className="briefing-row"><span>Current site</span><strong>South manufacturing zone</strong></div>
+            <div className="briefing-row"><span>On-call lead</span><strong>Shift B · EHS desk</strong></div>
+            <div className="briefing-row"><span>Protocol library</span><strong>Synced 2 min ago</strong></div>
+          </section>
+          <div className="rail-notice"><span><AlertTriangle size={14} /> Decision support</span><p>Protocol output is generated from the selected chemical and event type.</p></div>
+        </aside>
+        <MediaDock cameraOn={cameraOn} micOn={micOn} unknownMaterial={substance === "Unknown Substance"} fieldLevel={fieldLevel} voiceLevel={voiceLevel} mediaError={mediaError} videoRef={videoRef} onToggleCamera={toggleCamera} onToggleMic={toggleMic} />
+      </div>
+
+      <footer className="console-footer"><span>HW-OS / CONSOLE 04</span><span>Classification: internal operational use</span><span>v2.4.1 · All systems nominal</span></footer>
+    </main>
+  );
+}

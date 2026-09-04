@@ -1,0 +1,5 @@
+# Demo Regulatory Snippet — OSHA-Style Chemical Spill Response
+
+**Emergency release control.** Employers shall maintain written procedures for promptly identifying, isolating, and communicating a chemical release. When a spill presents a fire, toxic-vapor, corrosive, or uncontrolled exposure hazard, personnel not assigned to emergency response shall withdraw to a designated safe area and shall not attempt cleanup. The responsible supervisor shall account for personnel, notify the site emergency coordinator, and prevent entry until the area has been assessed and released for re-entry.
+
+**Emergency equipment and training.** Spill kits, eyewash stations, emergency showers, alarms, and suitable protective equipment shall be accessible, clearly marked, and inspected on a scheduled basis. Employees assigned to initial response shall be trained on the hazards of the materials handled, the limits of their response role, and the correct use and disposal of contaminated equipment. Water shall not be used on an unknown chemical release unless compatibility has been confirmed.
